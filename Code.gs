@@ -1,27 +1,97 @@
 /**
- * Minecraft style Educational Game - Backend Controller (Code.gs)
- * Integrated with Google Sheets as a database.
+ * Minecraft style Educational Game - Backend Headless JSON API (Code.gs)
+ * Decoupled API endpoint with automatic CORS support via ContentService.
  */
 
-// Route user requests
+// Headless API Routing
 function doGet(e) {
-  var page = e.parameter.page;
-  var template;
-  if (page === 'admin') {
-    template = HtmlService.createTemplateFromFile('Admin');
-  } else {
-    template = HtmlService.createTemplateFromFile('Index');
-  }
+  var action = e.parameter.action;
+  var result;
   
-  return template.evaluate()
-    .setTitle("Minecraft Educational World")
-    .addMetaTag("viewport", "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no")
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  try {
+    if (!action) {
+      throw new Error("Missing action parameter");
+    }
+    
+    if (action === 'initDatabase') {
+      result = { url: initDatabase() };
+    } 
+    else if (action === 'registerOrLoginUser') {
+      result = registerOrLoginUser(e.parameter.nickname);
+    } 
+    else if (action === 'getGameData') {
+      result = getGameData(e.parameter.userId);
+    } 
+    else if (action === 'addPost') {
+      result = addPost(
+        e.parameter.userId,
+        e.parameter.category,
+        e.parameter.author,
+        e.parameter.title,
+        e.parameter.summary,
+        e.parameter.paragraph,
+        e.parameter.imageUrl
+      );
+    } 
+    else if (action === 'readBlock') {
+      result = readBlock(e.parameter.userId, e.parameter.postId);
+    } 
+    else if (action === 'toggleLike') {
+      result = toggleLike(e.parameter.userId, e.parameter.postId);
+    } 
+    else if (action === 'addComment') {
+      result = addComment(
+        e.parameter.userId,
+        e.parameter.postId,
+        e.parameter.authorNickname,
+        e.parameter.commentText
+      );
+    } 
+    else if (action === 'getSheetData') {
+      result = getSheetDataAsJson(e.parameter.sheetName);
+    } 
+    else if (action === 'getAdminStats') {
+      result = getAdminStats();
+    }
+    else if (action === 'updateSetting') {
+      result = updateSetting(e.parameter.key, e.parameter.value);
+    }
+    else {
+      throw new Error("Invalid action: " + action);
+    }
+    
+    // Return output with automatic CORS headers added by Google Apps Script
+    return ContentService.createTextOutput(JSON.stringify(result))
+                         .setMimeType(ContentService.MimeType.JSON);
+                         
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ error: err.message }))
+                         .setMimeType(ContentService.MimeType.JSON);
+  }
 }
 
-// Include partial files (Style, Script) in templates
-function include(filename) {
-  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+// Update settings values
+function updateSetting(key, value) {
+  initDatabase();
+  var ss = getSpreadsheet();
+  var settingsSheet = ss.getSheetByName("Settings");
+  var rows = settingsSheet.getDataRange().getValues();
+  var foundRowIndex = -1;
+  
+  for (var i = 1; i < rows.length; i++) {
+    if (rows[i][0] === key) {
+      foundRowIndex = i + 1;
+      break;
+    }
+  }
+  
+  if (foundRowIndex !== -1) {
+    settingsSheet.getRange(foundRowIndex, 2).setValue(value);
+  } else {
+    settingsSheet.appendRow([key, value]);
+  }
+  
+  return { success: true };
 }
 
 // Get or auto-generate Spreadsheet database
@@ -33,12 +103,10 @@ function getSpreadsheet() {
     try {
       return SpreadsheetApp.openById(sheetId);
     } catch (err) {
-      // If the sheet was deleted or access lost, create a new one
       Logger.log("Stored spreadsheet ID invalid. Re-creating: " + err.message);
     }
   }
   
-  // Try active spreadsheet first (in case it is container-bound)
   try {
     var active = SpreadsheetApp.getActiveSpreadsheet();
     if (active) {
@@ -46,16 +114,15 @@ function getSpreadsheet() {
       return active;
     }
   } catch (err) {
-    Logger.log("Container-bound active spreadsheet not found. Creating a standalone file.");
+    Logger.log("Container-bound active spreadsheet not found.");
   }
   
-  // Create a new standalone spreadsheet in Google Drive
   var newSpreadsheet = SpreadsheetApp.create('Minecraft_Edu_Game_Database');
   properties.setProperty('SPREADSHEET_ID', newSpreadsheet.getId());
   return newSpreadsheet;
 }
 
-// Auto-initialize sheets and headers if they do not exist
+// Auto-initialize sheets and headers
 function initDatabase() {
   var ss = getSpreadsheet();
   
@@ -77,7 +144,6 @@ function initDatabase() {
       sheet = ss.insertSheet(sheetName);
       sheet.appendRow(sheetsConfig[sheetName]);
       
-      // Formatting headers
       var headerRange = sheet.getRange(1, 1, 1, sheetsConfig[sheetName].length);
       headerRange.setFontWeight("bold");
       headerRange.setBackground("#374151");
@@ -86,7 +152,6 @@ function initDatabase() {
     }
   }
   
-  // Default Settings
   var settingsSheet = ss.getSheetByName("Settings");
   var data = settingsSheet.getDataRange().getValues();
   if (data.length <= 1) {
@@ -98,7 +163,7 @@ function initDatabase() {
   return ss.getUrl();
 }
 
-// Helper to convert sheet data to array of JSON objects
+// Get Sheet as JSON array
 function getSheetDataAsJson(sheetName) {
   var ss = getSpreadsheet();
   var sheet = ss.getSheetByName(sheetName);
@@ -120,7 +185,7 @@ function getSheetDataAsJson(sheetName) {
   return jsonArray;
 }
 
-// User login / Registration
+// User Registration / Login
 function registerOrLoginUser(nickname) {
   initDatabase();
   nickname = nickname.trim();
@@ -138,12 +203,10 @@ function registerOrLoginUser(nickname) {
     return matchedUser;
   }
   
-  // Create new user
   var userId = "usr_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1000);
   var newUserRow = [userId, nickname, new Date()];
   userSheet.appendRow(newUserRow);
   
-  // Create initial quest logs
   var questSheet = ss.getSheetByName("Quests");
   var questTypes = ["READ_3", "LIKE_5", "COMMENT_2", "FIND_GREAT", "FIND_POOR"];
   questTypes.forEach(function(qType) {
@@ -151,7 +214,6 @@ function registerOrLoginUser(nickname) {
     questSheet.appendRow([questId, userId, qType, "IN_PROGRESS", 0, ""]);
   });
   
-  // Give 10 initial XP for joining
   addXpTransaction(userId, 10, "Welcome Bonus");
   
   return {
@@ -161,7 +223,7 @@ function registerOrLoginUser(nickname) {
   };
 }
 
-// Helper: Add XP transaction
+// XP transaction logger
 function addXpTransaction(userId, amount, reason) {
   var ss = getSpreadsheet();
   var xpSheet = ss.getSheetByName("XP");
@@ -169,7 +231,7 @@ function addXpTransaction(userId, amount, reason) {
   xpSheet.appendRow([xpId, userId, amount, reason, new Date()]);
 }
 
-// Calculate User total XP and Level
+// Aggregated XP calculator
 function getUserXpAndLevel(userId) {
   var xpData = getSheetDataAsJson("XP");
   var totalXp = xpData.reduce(function(sum, item) {
@@ -179,7 +241,6 @@ function getUserXpAndLevel(userId) {
     return sum;
   }, 0);
   
-  // Formula: Level = floor(sqrt(XP / 100)) + 1
   var level = Math.floor(Math.sqrt(totalXp / 100)) + 1;
   return {
     xp: totalXp,
@@ -187,20 +248,18 @@ function getUserXpAndLevel(userId) {
   };
 }
 
-// Add a post (creating a block in the 2D world)
+// Spawns/inserts blocks into double towns
 function addPost(userId, category, author, title, summary, paragraph, imageUrl) {
   var ss = getSpreadsheet();
   var postSheet = ss.getSheetByName("Posts");
   var posts = getSheetDataAsJson("Posts");
   
-  // Define town borders
   var isGreat = ["Hero", "Volunteer", "Independence fighter", "Educator", "Community contributor", 
                  "영웅", "봉사자", "독립운동가", "교육자", "지역사회 공헌 인물"].indexOf(category) !== -1;
   
   var minX = isGreat ? 50 : 550;
   var maxX = isGreat ? 450 : 950;
   
-  // Determine coordinate x based on grid spacing of 60 to prevent overlapping
   var x = minX;
   var spacing = 60;
   var occupied = true;
@@ -212,14 +271,13 @@ function addPost(userId, category, author, title, summary, paragraph, imageUrl) 
     if (occupied) {
       x += spacing;
       if (x > maxX) {
-        // Wrap around with slight random offset to stack blocks higher
         x = minX + Math.floor(Math.random() * 40);
         spacing = 40 + Math.floor(Math.random() * 30);
       }
     }
   }
   
-  var y = 0; // standard ground level block position
+  var y = 0;
   var postId = "post_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1000);
   var newPostRow = [
     postId, 
@@ -235,14 +293,12 @@ function addPost(userId, category, author, title, summary, paragraph, imageUrl) 
   ];
   
   postSheet.appendRow(newPostRow);
-  
-  // User gets +5 XP for submitting a block
   addXpTransaction(userId, 5, "Submitted Post");
   
   return getGameData(userId);
 }
 
-// Fetch all game state for a user (posts, user status, today's recommendation, quests, badges)
+// Build game states payload
 function getGameData(userId) {
   var posts = getSheetDataAsJson("Posts");
   var views = getSheetDataAsJson("Views");
@@ -250,22 +306,14 @@ function getGameData(userId) {
   var comments = getSheetDataAsJson("Comments");
   var badges = getSheetDataAsJson("Badges");
   var quests = getSheetDataAsJson("Quests");
-  var settings = getSheetDataAsJson("Settings");
   
-  // Calculate level & xp
   var stats = getUserXpAndLevel(userId);
-  
-  // Filter user's badges
   var userBadges = badges.filter(function(b) { return b.userId === userId; }).map(function(b) { return b.badgeType; });
-  
-  // Filter user's quests
   var userQuests = quests.filter(function(q) { return q.userId === userId; });
   
-  // Append view/like/comment counts to each post
   var processedPosts = posts.map(function(p) {
     var pViews = views.filter(function(v) { return v.postId === p.postId; });
     var pLikes = likes.filter(function(l) { return l.postId === p.postId; });
-    var pComments = comments.filter(function(c) { return c.postId === p.postId; });
     
     return {
       postId: p.postId,
@@ -280,12 +328,10 @@ function getGameData(userId) {
       createdDate: p.createdDate,
       viewsCount: pViews.length,
       likesCount: pLikes.length,
-      commentsCount: pComments.length,
       hasLiked: likes.some(function(l) { return l.postId === p.postId && l.userId === userId; })
     };
   });
   
-  // Daily recommended person logic
   var recommendedPost = getDailyRecommendation(processedPosts);
   
   return {
@@ -299,13 +345,11 @@ function getGameData(userId) {
   };
 }
 
-// Daily recommended person controller
 function getDailyRecommendation(posts) {
   if (posts.length === 0) return null;
   
   var ss = getSpreadsheet();
   var settingsSheet = ss.getSheetByName("Settings");
-  var settings = getSheetDataAsJson("Settings");
   
   var todayStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
   
@@ -327,14 +371,11 @@ function getDailyRecommendation(posts) {
   }
   
   var recommended = posts.find(function(p) { return p.postId === cachedPostId; });
-  
   if (recommended && cachedDate === todayStr) {
     return recommended;
   }
   
-  // Cache is missing or outdated, pick a new recommendation randomly
   var randPost = posts[Math.floor(Math.random() * posts.length)];
-  
   if (postRowIndex !== -1) {
     settingsSheet.getRange(postRowIndex, 2).setValue(randPost.postId);
   } else {
@@ -350,7 +391,7 @@ function getDailyRecommendation(posts) {
   return randPost;
 }
 
-// Record block reading
+// Log block reading views
 function readBlock(userId, postId) {
   var ss = getSpreadsheet();
   var viewSheet = ss.getSheetByName("Views");
@@ -358,6 +399,14 @@ function readBlock(userId, postId) {
   var posts = getSheetDataAsJson("Posts");
   
   var post = posts.find(function(p) { return p.postId === postId; });
+  
+  // Dummy quest check trigger handler
+  if (postId === "post_dummy_quest_trigger") {
+    checkMilestoneBadges(userId);
+    updateQuestProgress(userId, null);
+    return getGameData(userId);
+  }
+  
   if (!post) throw new Error("Post not found");
   
   var alreadyRead = views.some(function(v) { return v.postId === postId && v.userId === userId; });
@@ -366,9 +415,6 @@ function readBlock(userId, postId) {
     var viewId = "vw_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1000);
     viewSheet.appendRow([viewId, postId, userId, new Date()]);
     
-    // XP awarded only if viewing a friend's block (author is different)
-    // We compare user nickname or just check if author != user nickname. But we don't store authorUserId in Posts.
-    // Instead we check if user's nickname equals the author. Let's find user's nickname.
     var users = getSheetDataAsJson("Users");
     var user = users.find(function(u) { return u.userId === userId; });
     var nickname = user ? user.nickname : "";
@@ -383,7 +429,7 @@ function readBlock(userId, postId) {
   return getGameData(userId);
 }
 
-// Toggle or submit a Like
+// Toggle Like
 function toggleLike(userId, postId) {
   var ss = getSpreadsheet();
   var likeSheet = ss.getSheetByName("Likes");
@@ -397,21 +443,17 @@ function toggleLike(userId, postId) {
   var existingLike = likes.find(function(l) { return l.postId === postId && l.userId === userId; });
   
   if (!existingLike) {
-    // Like
     var likeId = "lk_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1000);
     likeSheet.appendRow([likeId, postId, userId, new Date()]);
     
-    // +2 XP to the user who liked
     addXpTransaction(userId, 2, "Liked Block: " + post.title);
     
-    // Find the author of the post to reward them +3 XP
     var authorUser = users.find(function(u) { return u.nickname.toLowerCase() === post.author.toLowerCase(); });
     if (authorUser && authorUser.userId !== userId) {
       addXpTransaction(authorUser.userId, 3, "Received Like on: " + post.title);
-      checkMilestoneBadges(authorUser.userId); // Check popular author badge
+      checkMilestoneBadges(authorUser.userId);
     }
     
-    // Update quest progress for Liker
     updateQuestProgress(userId, null, "LIKE");
     checkMilestoneBadges(userId);
   }
@@ -419,7 +461,7 @@ function toggleLike(userId, postId) {
   return getGameData(userId);
 }
 
-// Submit a Comment
+// Add Comments
 function addComment(userId, postId, authorNickname, commentText) {
   if (!commentText.trim()) throw new Error("Comment text cannot be empty");
   
@@ -429,17 +471,14 @@ function addComment(userId, postId, authorNickname, commentText) {
   var commentId = "cmt_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1000);
   commentSheet.appendRow([commentId, postId, authorNickname, commentText, new Date()]);
   
-  // +5 XP to commentator
   addXpTransaction(userId, 5, "Added Comment");
-  
-  // Update quests & milestone badges
   updateQuestProgress(userId, null, "COMMENT");
   checkMilestoneBadges(userId);
   
   return getGameData(userId);
 }
 
-// Quest progression helper
+// Quest progression validation
 function updateQuestProgress(userId, post, actionType) {
   var ss = getSpreadsheet();
   var questSheet = ss.getSheetByName("Quests");
@@ -447,17 +486,13 @@ function updateQuestProgress(userId, post, actionType) {
   
   var views = getSheetDataAsJson("Views").filter(function(v) { return v.userId === userId; });
   var likes = getSheetDataAsJson("Likes").filter(function(l) { return l.userId === userId; });
-  var comments = getSheetDataAsJson("Comments"); // Need to match comments written by this user
+  var comments = getSheetDataAsJson("Comments");
   
-  // Find user nickname
   var users = getSheetDataAsJson("Users");
   var userObj = users.find(function(u) { return u.userId === userId; });
   var userNickname = userObj ? userObj.nickname : "";
   
   var userComments = comments.filter(function(c) { return c.user.toLowerCase() === userNickname.toLowerCase(); });
-  
-  // Re-read posts to match categories
-  var posts = getSheetDataAsJson("Posts");
   
   for (var i = 1; i < questRows.length; i++) {
     if (questRows[i][1] === userId && questRows[i][3] === "IN_PROGRESS") {
@@ -477,30 +512,22 @@ function updateQuestProgress(userId, post, actionType) {
       } else if (qType === "FIND_GREAT" && post) {
         var isGreat = ["Hero", "Volunteer", "Independence fighter", "Educator", "Community contributor",
                        "영웅", "봉사자", "독립운동가", "교육자", "지역사회 공헌 인물"].indexOf(post.category) !== -1;
-        if (isGreat) {
-          progress = 1;
-        } else {
-          continue;
-        }
+        if (isGreat) progress = 1;
+        else continue;
       } else if (qType === "FIND_POOR" && post) {
         var isPoor = ["Migrant worker", "Elderly living alone", "Disabled", "School dropout youth", "Socially vulnerable",
                        "이주노동자", "독거노인", "장애인", "학교 밖 청소년", "사회적 약자"].indexOf(post.category) !== -1;
-        if (isPoor) {
-          progress = 1;
-        } else {
-          continue;
-        }
+        if (isPoor) progress = 1;
+        else continue;
       } else {
         continue;
       }
       
-      // Update sheets
       questSheet.getRange(i + 1, 5).setValue(progress);
       if (progress >= target) {
         questSheet.getRange(i + 1, 4).setValue("COMPLETED");
         questSheet.getRange(i + 1, 6).setValue(new Date());
         
-        // Award rewards
         var rewardXp = 0;
         var badgeType = "";
         
@@ -528,7 +555,7 @@ function updateQuestProgress(userId, post, actionType) {
   }
 }
 
-// Award Badge
+// Award badges
 function awardBadge(userId, badgeType) {
   var ss = getSpreadsheet();
   var badgeSheet = ss.getSheetByName("Badges");
@@ -544,44 +571,27 @@ function awardBadge(userId, badgeType) {
   }
 }
 
-// Check and award Milestone Badges
+// Milestone checks
 function checkMilestoneBadges(userId) {
   var views = getSheetDataAsJson("Views").filter(function(v) { return v.userId === userId; });
   var comments = getSheetDataAsJson("Comments");
-  
   var users = getSheetDataAsJson("Users");
   var userObj = users.find(function(u) { return u.userId === userId; });
   var nickname = userObj ? userObj.nickname : "";
   
   var userComments = comments.filter(function(c) { return c.user.toLowerCase() === nickname.toLowerCase(); });
   
-  // Check likes received
   var posts = getSheetDataAsJson("Posts").filter(function(p) { return p.author.toLowerCase() === nickname.toLowerCase(); });
   var likes = getSheetDataAsJson("Likes");
   var likesReceived = likes.filter(function(l) {
     return posts.some(function(p) { return p.postId === l.postId; });
   }).length;
   
-  // 1. 독서가: 블록 10개 읽기
-  if (views.length >= 10) {
-    awardBadge(userId, "독서가");
-  }
-  // 2. 탐험가: 블록 30개 읽기
-  if (views.length >= 30) {
-    awardBadge(userId, "탐험가");
-  }
-  // 3. 마을 연구자: 블록 50개 읽기
-  if (views.length >= 50) {
-    awardBadge(userId, "마을 연구자");
-  }
-  // 4. 소통왕: 댓글 20개 작성
-  if (userComments.length >= 20) {
-    awardBadge(userId, "소통왕");
-  }
-  // 5. 인기 작가: 좋아요 30개 획득
-  if (likesReceived >= 30) {
-    awardBadge(userId, "인기 작가");
-  }
+  if (views.length >= 10) awardBadge(userId, "독서가");
+  if (views.length >= 30) awardBadge(userId, "탐험가");
+  if (views.length >= 50) awardBadge(userId, "마을 연구자");
+  if (userComments.length >= 20) awardBadge(userId, "소통왕");
+  if (likesReceived >= 30) awardBadge(userId, "인기 작가");
 }
 
 // Compile stats for teacher page
@@ -595,22 +605,18 @@ function getAdminStats() {
   var comments = getSheetDataAsJson("Comments");
   var xp = getSheetDataAsJson("XP");
   
-  // 1. Student Count
   var studentCount = users.length;
   
-  // 2. Submission Rate
   var ss = getSpreadsheet();
   var settings = getSheetDataAsJson("Settings");
   var totalStudentsSetting = settings.find(function(s) { return s.key === "total_students"; });
   var targetCount = totalStudentsSetting ? Number(totalStudentsSetting.value) : 30;
   var submissionRate = targetCount > 0 ? Math.round((posts.length / targetCount) * 100) : 0;
   
-  // 3. Totals
   var totalReads = views.length;
   var totalLikes = likes.length;
   var totalComments = comments.length;
   
-  // 4. Popular People Top 10 (most viewed posts)
   var postViews = posts.map(function(p) {
     var count = views.filter(function(v) { return v.postId === p.postId; }).length;
     return {
@@ -622,7 +628,6 @@ function getAdminStats() {
   postViews.sort(function(a, b) { return b.views - a.views; });
   var popularPeopleTop10 = postViews.slice(0, 10);
   
-  // 5. Word Cloud & Keyword Frequency Top 20
   var combinedText = "";
   posts.forEach(function(p) {
     combinedText += " " + p.title + " " + p.summary + " " + p.paragraph;
@@ -631,7 +636,6 @@ function getAdminStats() {
   var wordCloudData = words.slice(0, 100);
   var popularKeywordsTop20 = words.slice(0, 20);
   
-  // 6. Heatmap Data
   var heatmapData = posts.map(function(p) {
     var count = views.filter(function(v) { return v.postId === p.postId; }).length;
     return {
@@ -645,7 +649,6 @@ function getAdminStats() {
     };
   });
   
-  // 7. Rankings: Weekly XP, Monthly XP, Likes, Views
   var rankings = getRankings(users, posts, views, likes, xp);
   
   return {
@@ -662,15 +665,13 @@ function getAdminStats() {
   };
 }
 
-// Korean Noun and Stopwords Parser for Keyword Extraction
+// Korean Noun and Stopwords Parser
 function extractKeywords(text) {
   if (!text) return [];
   
-  // Clean text from punctuation
   var cleanText = text.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'\[\]]/g, " ").replace(/\s+/g, " ");
   var tokens = cleanText.split(" ");
   
-  // List of standard Korean stop words (conjunctions, prepositions, endings, common words)
   var stopWords = [
     "은", "는", "이", "가", "을", "를", "에", "의", "로", "으로", "과", "와", "도", "에서", 
     "등", "한", "것", "들", "수", "해", "그", "이것", "저것", "그것", "있다", "없다", 
@@ -682,9 +683,8 @@ function extractKeywords(text) {
   var freq = {};
   tokens.forEach(function(token) {
     token = token.trim();
-    if (token.length < 2) return; // Skip single characters
+    if (token.length < 2) return;
     
-    // Simple stemming/cleaning of endings
     var stem = token;
     var suffixes = ["은", "는", "이", "가", "을", "를", "에", "의", "로", "으로", "과", "와", "도", "에서", "들", "을"];
     suffixes.forEach(function(sfx) {
@@ -706,13 +706,12 @@ function extractKeywords(text) {
   return sorted;
 }
 
-// Compile rankings lists (Top 10)
+// Compile rankings lists
 function getRankings(users, posts, views, likes, xp) {
   var now = new Date().getTime();
   var oneWeek = 7 * 24 * 60 * 60 * 1000;
   var oneMonth = 30 * 24 * 60 * 60 * 1000;
   
-  // Pre-calculate user names and totals
   var userList = users.map(function(u) {
     var uXp = xp.filter(function(x) { return x.userId === u.userId; });
     
@@ -730,13 +729,11 @@ function getRankings(users, posts, views, likes, xp) {
       return sum + Number(x.xpChange || 0);
     }, 0);
     
-    // Likes received
     var userPosts = posts.filter(function(p) { return p.author.toLowerCase() === u.nickname.toLowerCase(); });
     var likesCount = likes.filter(function(l) {
       return userPosts.some(function(p) { return p.postId === l.postId; });
     }).length;
     
-    // Views received
     var viewsCount = views.filter(function(v) {
       return userPosts.some(function(p) { return p.postId === v.postId; });
     }).length;
@@ -751,19 +748,15 @@ function getRankings(users, posts, views, likes, xp) {
     };
   });
   
-  // Weekly XP Ranking
   var weeklyRank = JSON.parse(JSON.stringify(userList));
   weeklyRank.sort(function(a, b) { return b.weeklyXp - a.weeklyXp; });
   
-  // Monthly XP Ranking
   var monthlyRank = JSON.parse(JSON.stringify(userList));
   monthlyRank.sort(function(a, b) { return b.monthlyXp - a.monthlyXp; });
   
-  // Likes Ranking
   var likesRank = JSON.parse(JSON.stringify(userList));
   likesRank.sort(function(a, b) { return b.likes - a.likes; });
   
-  // Views Ranking
   var viewsRank = JSON.parse(JSON.stringify(userList));
   viewsRank.sort(function(a, b) { return b.views - a.views; });
   

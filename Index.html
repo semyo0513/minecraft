@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Minecraft Educational World</title>
-  <!-- Load Style.html -->
-  <?= include('Style'); ?>
+  <!-- Load static style.css -->
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
@@ -28,6 +29,10 @@
         </div>
         
         <button id="login-submit-btn" class="pixel-btn pixel-btn-primary" style="width: 100%">월드 입장하기</button>
+        
+        <div style="margin-top:20px;">
+          <a href="#" id="setup-api-link" style="color:var(--mc-diamond); font-size:12px; text-decoration:underline; font-weight:600;">API 연결 주소 설정 (처음 시작 시 필수의 단계)</a>
+        </div>
       </div>
     </div>
 
@@ -57,9 +62,12 @@
             <button id="tp-great-btn" class="pixel-btn town-btn pixel-btn-primary">위대한 마을</button>
             <button id="tp-poor-btn" class="pixel-btn town-btn pixel-btn-danger">소외된 마을</button>
           </div>
-          <button id="add-block-trigger-btn" class="pixel-btn pixel-btn-primary" style="font-size: 10px;">블록 만들기</button>
+          <div style="display:flex; gap:8px;">
+            <button id="settings-trigger-btn" class="pixel-btn town-btn" style="background:#555; color:#fff; box-shadow: inset -3px -3px 0px 0px #222, inset 3px 3px 0px 0px #888; padding: 8px 12px; font-size:10px;">⚙ 설정</button>
+            <button id="add-block-trigger-btn" class="pixel-btn pixel-btn-primary" style="font-size: 10px; padding: 8px 12px;">블록 만들기</button>
+          </div>
           
-          <div id="recom-banner-trigger" class="pixel-box" style="padding: 6px 12px; cursor: pointer; background: rgba(0,0,0,0.8); border-color: var(--mc-gold); box-shadow: none; color: var(--mc-gold); font-family: var(--font-retro); font-size: 8px;">
+          <div id="recom-banner-trigger" class="pixel-box" style="padding: 6px 12px; cursor: pointer; background: rgba(0,0,0,0.8); border-color: var(--mc-gold); box-shadow: none; color: var(--mc-gold); font-family: var(--font-retro); font-size: 8px; margin-top:8px;">
             ★ 오늘의 추천 인물
           </div>
         </div>
@@ -308,7 +316,29 @@
     </div>
   </div>
 
-  <!-- Load Script.html -->
-  <?= include('Script'); ?>
+  <!-- 6. API Settings Configuration Modal -->
+  <div id="modal-api-settings" class="modal-overlay">
+    <div class="pixel-modal" style="max-width: 500px; border-color: var(--mc-diamond);">
+      <div class="modal-header">
+        <h2 class="modal-title">구글 스프레드시트 API 설정</h2>
+        <button class="pixel-btn close-btn" onclick="closeModal('modal-api-settings')">X</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 13px; color: #ccc; margin-bottom: 12px; line-height:1.5;">
+          데이터를 실시간으로 저장하기 위해 Google Apps Script 웹 앱 배포 후 발급받은 <strong>웹 앱 URL (API 주소)</strong>을 입력해 주세요.
+        </p>
+        
+        <div class="pixel-input-container">
+          <label class="pixel-label">Apps Script 웹 앱 URL</label>
+          <input type="text" id="api-url-input" class="pixel-input" placeholder="https://script.google.com/macros/s/.../exec" style="font-size:12px;">
+        </div>
+        
+        <button id="api-url-save-btn" class="pixel-btn pixel-btn-primary" style="width: 100%">설정 저장 및 연결하기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load static script.js -->
+  <script src="script.js"></script>
 </body>
 </html>

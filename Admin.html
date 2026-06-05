@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <base target="_top">
+  <meta charset="utf-8">
   <title>Minecraft Teacher Dashboard</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Press+Start+2P&display=swap');
@@ -41,7 +41,6 @@
       gap: 24px;
     }
 
-    /* Header styling */
     .dash-header {
       display: flex;
       justify-content: space-between;
@@ -87,7 +86,30 @@
     .btn-secondary { background-color: #334155; color: #fff; }
     .btn-secondary:hover { background-color: #475569; }
 
-    /* Summary Stats Grid */
+    /* API config bar at top */
+    .api-config-bar {
+      background-color: rgba(59, 130, 246, 0.15);
+      border: 1px solid var(--primary);
+      border-radius: 10px;
+      padding: 14px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .api-config-input {
+      flex: 1;
+      min-width: 300px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: 1px solid #475569;
+      background-color: #0b0f19;
+      color: #fff;
+      outline: none;
+    }
+
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -133,7 +155,6 @@
       color: #fff;
     }
 
-    /* Main Dashboard Layout Columns */
     .layout-grid {
       display: grid;
       grid-template-columns: 1fr;
@@ -146,7 +167,6 @@
       }
     }
 
-    /* Card Panels */
     .panel-card {
       background-color: var(--panel-dark);
       border: 1px solid #334155;
@@ -171,7 +191,6 @@
       color: #fff;
     }
 
-    /* Heatmap styling */
     .heatmap-legend {
       display: flex;
       flex-wrap: wrap;
@@ -290,7 +309,6 @@
       box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
 
-    /* Word Cloud panel */
     .wordcloud-container {
       width: 100%;
       height: 250px;
@@ -308,7 +326,6 @@
       height: 100%;
     }
 
-    /* Rankings tabs & lists */
     .tab-bar {
       display: flex;
       gap: 8px;
@@ -387,7 +404,6 @@
       color: var(--primary);
     }
 
-    /* Grid layout for keywords & popular cards */
     .bottom-layout {
       display: grid;
       grid-template-columns: 1fr;
@@ -399,7 +415,6 @@
       }
     }
 
-    /* Table styles */
     .admin-table {
       width: 100%;
       border-collapse: collapse;
@@ -421,7 +436,6 @@
       background-color: rgba(255, 255, 255, 0.02);
     }
 
-    /* Settings sheet link card */
     .settings-panel {
       display: flex;
       flex-direction: column;
@@ -442,6 +456,18 @@
       <div class="header-actions">
         <button id="refresh-btn" class="btn btn-secondary">🔄 실시간 갱신</button>
         <button id="db-setup-btn" class="btn btn-primary">⚙ DB 초기설정</button>
+      </div>
+    </div>
+
+    <!-- API CONFIG BAR -->
+    <div class="api-config-bar">
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <span style="font-size: 13px; font-weight: 700; color: #fff;">구글 앱스 스크립트 API URL 연동</span>
+        <span style="font-size: 11px; color: var(--text-muted);">대시보드를 로드하기 전에 Apps Script 웹앱 주소를 입력하세요.</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; flex:1; justify-content:flex-end;">
+        <input type="text" id="api-url-input" class="api-config-input" placeholder="https://script.google.com/macros/s/.../exec">
+        <button class="btn btn-primary" onclick="saveDashboardApi()">저장 및 연결</button>
       </div>
     </div>
 
@@ -475,7 +501,7 @@
       <!-- LEFT COLUMN: HEATMAP & WORDCLOUD -->
       <div style="display: flex; flex-direction: column; gap: 24px;">
         
-        <!-- Heatmap block Panel -->
+        <!-- Heatmap Panel -->
         <div class="panel-card">
           <div class="panel-header">
             <h2 class="panel-title">교사용 인물 블록 열람 히트맵 (조회수 기준)</h2>
@@ -494,7 +520,7 @@
               <div class="heatmap-town">
                 <h3 class="heatmap-town-title">■ 위대한 인물 마을 (x: 0 ~ 500)</h3>
                 <div class="heatmap-blocks-row" id="heatmap-great-blocks">
-                  <!-- Dynamically populated blocks -->
+                  <!-- Blocks -->
                 </div>
               </div>
               
@@ -502,7 +528,7 @@
               <div class="heatmap-town">
                 <h3 class="heatmap-town-title">■ 소외된 인물 마을 (x: 501 ~ 1000)</h3>
                 <div class="heatmap-blocks-row" id="heatmap-poor-blocks">
-                  <!-- Dynamically populated blocks -->
+                  <!-- Blocks -->
                 </div>
               </div>
             </div>
@@ -537,7 +563,7 @@
         </div>
 
         <div class="rankings-list" id="rankings-list-container">
-          <!-- Dynamically populated ranking items -->
+          <!-- Rankings -->
         </div>
       </div>
 
@@ -561,7 +587,7 @@
             </tr>
           </thead>
           <tbody id="popular-posts-tbody">
-            <!-- Dynamically populated -->
+            <!-- Populated -->
           </tbody>
         </table>
       </div>
@@ -580,7 +606,7 @@
             </tr>
           </thead>
           <tbody id="popular-keywords-tbody">
-            <!-- Dynamically populated -->
+            <!-- Populated -->
           </tbody>
         </table>
       </div>
@@ -593,7 +619,7 @@
         <h2 class="panel-title">구글 스프레드시트 연동 상태</h2>
       </div>
       <div class="settings-panel">
-        <p style="font-size:14px; color: var(--text-muted);" id="db-url-display">스프레드시트 연결 확인 중...</p>
+        <p style="font-size:14px; color: var(--text-muted);" id="db-url-display">스프레드시트 연결 확인 대기 중...</p>
         <div style="display:flex; gap:16px; align-items:center; margin-top: 8px;">
           <label style="font-size:13px; font-weight:600;">목표 학급 정원 설정:</label>
           <input type="number" id="settings-students-count" value="30" style="padding: 6px; border-radius: 4px; border:1px solid #475569; background:#0b0f19; color:#fff; width: 80px;">
@@ -608,102 +634,138 @@
     let currentRankingTab = 'weekly';
     let statsData = null;
 
+    // Helper to send CORS request to Apps Script Webapp API
+    function callDashboardApi(action, params = {}) {
+      const apiUrl = localStorage.getItem('mc_api_url');
+      if (!apiUrl) {
+        alert("먼저 구글 앱스 스크립트 웹앱 주소(API)를 저장해 주세요.");
+        return Promise.reject("Missing API URL");
+      }
+
+      const url = new URL(apiUrl);
+      url.searchParams.set('action', action);
+      for (const k in params) {
+        url.searchParams.set(k, params[k]);
+      }
+
+      return fetch(url.toString(), {
+        method: 'GET',
+        mode: 'cors'
+      })
+      .then(res => {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(data => {
+        if (data.error) throw new Error(data.error);
+        return data;
+      })
+      .catch(err => {
+        console.error("Dashboard API error (" + action + "):", err);
+        throw err;
+      });
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
-      loadStats();
+      // Prepopulate saved API URL
+      const savedUrl = localStorage.getItem('mc_api_url');
+      if (savedUrl) {
+        document.getElementById('api-url-input').value = savedUrl;
+        loadStats();
+      } else {
+        document.getElementById('db-url-display').innerText = "Apps Script API 주소를 상단에 설정해 주세요.";
+      }
       
       // Auto refresh every 15 seconds
-      setInterval(loadStats, 15000);
+      setInterval(() => {
+        if (localStorage.getItem('mc_api_url')) loadStats();
+      }, 15000);
 
       document.getElementById('refresh-btn').addEventListener('click', loadStats);
       document.getElementById('db-setup-btn').addEventListener('click', runDbSetup);
     });
 
-    // Fetch stats via Apps Script API
-    function loadStats() {
-      document.getElementById('refresh-btn').innerText = "🔄 갱신 중...";
-      google.script.run
-        .withSuccessHandler((data) => {
-          statsData = data;
-          document.getElementById('refresh-btn').innerText = "🔄 실시간 갱신";
-          
-          updateDashboard();
-        })
-        .withFailureHandler((err) => {
-          document.getElementById('refresh-btn').innerText = "🔄 실시간 갱신";
-          alert("통계 자료 조회 중 오류: " + err.message);
-        })
-        .getAdminStats();
+    // Save and connect API from input
+    function saveDashboardApi() {
+      const url = document.getElementById('api-url-input').value.trim();
+      if (!url) {
+        alert("API 주소를 입력해 주세요.");
+        return;
+      }
+      localStorage.setItem('mc_api_url', url);
+      alert("설정 주소가 저장되었습니다. 데이터를 로드합니다.");
+      loadStats();
     }
 
-    // Set up database sheets
+    // Load statistics
+    function loadStats() {
+      document.getElementById('refresh-btn').innerText = "🔄 갱신 중...";
+      callDashboardApi('getAdminStats')
+        .then((data) => {
+          statsData = data;
+          document.getElementById('refresh-btn').innerText = "🔄 실시간 갱신";
+          updateDashboard();
+        })
+        .catch((err) => {
+          document.getElementById('refresh-btn').innerText = "🔄 실시간 갱신";
+          document.getElementById('db-url-display').innerText = "API 연결 오류: " + err.message;
+        });
+    }
+
+    // Run database sheet setups
     function runDbSetup() {
       if (!confirm("데이터베이스 시트를 초기화 또는 확인하시겠습니까?")) return;
       document.getElementById('db-setup-btn').innerText = "⚙ 설정 중...";
-      google.script.run
-        .withSuccessHandler((url) => {
+      
+      callDashboardApi('initDatabase')
+        .then((res) => {
           document.getElementById('db-setup-btn').innerText = "⚙ DB 초기설정";
           alert("데이터베이스 생성이 완료되었습니다!");
           loadStats();
         })
-        .withFailureHandler((err) => {
+        .catch((err) => {
           document.getElementById('db-setup-btn').innerText = "⚙ DB 초기설정";
           alert("오류가 발생했습니다: " + err.message);
-        })
-        .initDatabase();
+        });
     }
 
-    // Update students count
+    // Change target class students setting
     function updateTargetStudents() {
       const cnt = document.getElementById('settings-students-count').value;
-      google.script.run
-        .withSuccessHandler(() => {
+      callDashboardApi('updateSetting', { key: 'total_students', value: cnt })
+        .then(() => {
           alert("설정이 저장되었습니다.");
           loadStats();
         })
-        .withFailureHandler((err) => {
+        .catch((err) => {
           alert("설정 저장 실패: " + err.message);
-        })
-        .getSheetDataAsJson("Settings"); // Dummy API check, let's write to Settings directly
-        
-      // Quick fallback save to sheet settings
-      google.script.run.registerOrLoginUser("dummy_admin"); // ensures sheet init
+        });
     }
 
-    // Main UI update routing
+    // Dynamic UI builder
     function updateDashboard() {
       if (!statsData) return;
 
-      // Stats cards
       document.getElementById('stat-students').innerText = statsData.studentCount + " 명";
       document.getElementById('stat-submission').innerText = statsData.submissionRate + " %";
       document.getElementById('stat-reads').innerText = statsData.totalReads + " 회";
       document.getElementById('stat-likes').innerText = statsData.totalLikes + " 회";
       document.getElementById('stat-comments').innerText = statsData.totalComments + " 개";
 
-      // Heatmaps populate
       populateHeatmap('heatmap-great-blocks', statsData.heatmapData.filter(p => p.x < 500));
       populateHeatmap('heatmap-poor-blocks', statsData.heatmapData.filter(p => p.x >= 500));
 
-      // Word Cloud drawing
       drawWordCloud(statsData.wordCloudData);
-
-      // Tables
       populatePopularPosts(statsData.popularPeopleTop10);
       populateKeywords(statsData.popularKeywordsTop20);
-
-      // Rankings
       renderRankings();
       
-      // Update link display
       document.getElementById('db-url-display').innerHTML = `
-        <strong>데이터베이스 구글 시트 연결 성공</strong><br>
-        <span style="font-size:12px; font-family: monospace; word-break:break-all;">스프레드시트 URL: 
-          <a href="#" onclick="window.open('https://docs.google.com/spreadsheets/d/' + localStorage.getItem('mc_sheet_id'), '_blank'); return false;" style="color:var(--primary);">구글 시트 바로가기</a>
-        </span>
+        <strong>구글 스프레드시트 연동 성공</strong><br>
+        <span style="font-size:12px;">교실 월드가 연동되어 실시간 데이터를 받아오고 있습니다.</span>
       `;
     }
 
-    // Heatmap display builder
     function populateHeatmap(containerId, list) {
       const container = document.getElementById(containerId);
       container.innerHTML = '';
@@ -717,7 +779,6 @@
         const block = document.createElement('div');
         block.className = 'heatmap-block';
         
-        // Color assignments based on views
         let colorClass = 'color-0';
         if (p.views >= 30) colorClass = 'color-30plus';
         else if (p.views >= 16) colorClass = 'color-16-30';
@@ -732,7 +793,6 @@
           <div class="heatmap-block-views">👁${p.views}</div>
         `;
         
-        // Tooltip hover actions
         block.addEventListener('mousemove', (e) => showTooltip(e, p));
         block.addEventListener('mouseleave', hideTooltip);
 
@@ -758,12 +818,10 @@
       document.getElementById('block-tooltip').style.display = 'none';
     }
 
-    // Simple Spiral Word Cloud Generator on Canvas
     function drawWordCloud(wordList) {
       const canvas = document.getElementById('wordcloud-canvas');
       const ctx = canvas.getContext('2d');
       
-      // Handle resolution adjustments
       const width = canvas.parentElement.clientWidth;
       const height = canvas.parentElement.clientHeight;
       canvas.width = width;
@@ -773,25 +831,21 @@
       if (!wordList || wordList.length === 0) {
         ctx.fillStyle = "#666";
         ctx.font = "14px var(--font-body)";
-        ctx.fillText("충분한 분석 데이터가 존재하지 않습니다.", width / 2 - 100, height / 2);
+        ctx.fillText("제출 문장이 부족하여 분석 결과가 아직 없습니다.", width / 2 - 130, height / 2);
         return;
       }
 
       const maxCount = wordList[0].size;
       const center = { x: width / 2, y: height / 2 };
       
-      // Draw words in a spiral to prevent collisions
       wordList.forEach((w, index) => {
-        // Compute font sizing
         const scale = w.size / maxCount;
         const fontSize = Math.floor(10 + scale * 26);
         ctx.font = `bold ${fontSize}px var(--font-body)`;
         
-        // Random coloring based on weights
         const colors = ["#60a5fa", "#3b82f6", "#2563eb", "#10b981", "#34d399", "#f59e0b", "#f97316", "#ef4444", "#a78bfa", "#f472b6"];
         ctx.fillStyle = colors[index % colors.length];
         
-        // Spiral equations
         const angle = 0.5 * index;
         const radius = 9 * Math.sqrt(index);
         const x = center.x + radius * Math.cos(angle) - (ctx.measureText(w.text).width / 2);
@@ -801,7 +855,6 @@
       });
     }
 
-    // Popular blocks list
     function populatePopularPosts(list) {
       const tbody = document.getElementById('popular-posts-tbody');
       tbody.innerHTML = '';
@@ -823,7 +876,6 @@
       });
     }
 
-    // Keywords list
     function populateKeywords(list) {
       const tbody = document.getElementById('popular-keywords-tbody');
       tbody.innerHTML = '';
@@ -844,7 +896,6 @@
       });
     }
 
-    // Switch active rankings tab
     function switchRankingTab(tabName) {
       currentRankingTab = tabName;
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -852,7 +903,6 @@
       renderRankings();
     }
 
-    // Populate Rankings panel
     function renderRankings() {
       if (!statsData || !statsData.rankings) return;
       
