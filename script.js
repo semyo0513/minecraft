@@ -278,6 +278,7 @@ function loadGameData() {
       
       updateHUD();
       showScreen('screen-game');
+      resizeCanvas();
       
       // Start Game loop
       if (!gameLoopId) {
@@ -392,7 +393,7 @@ function openProfileModal() {
   container.innerHTML = '';
   
   for (const bName in badgeMetadata) {
-    const unlocked = state.badges.includes(bName);
+    const unlocked = (state.badges || []).includes(bName);
     const meta = badgeMetadata[bName];
     
     const badgeDiv = document.createElement('div');
@@ -427,7 +428,7 @@ function showRecommendationCard() {
 // Open block details modal
 let selectedPostId = null;
 function openBlockDetail(postId) {
-  const p = state.posts.find(item => item.postId === postId);
+  const p = (state.posts || []).find(item => item.postId === postId);
   if (!p) return;
   
   selectedPostId = postId;
@@ -557,7 +558,7 @@ function openNpcDialogue(npc) {
   document.getElementById('npc-name').innerText = npc.name;
   document.getElementById('npc-avatar').innerText = npc.emoji;
   
-  const quest = state.quests.find(q => q.questType === npc.id);
+  const quest = (state.quests || []).find(q => q.questType === npc.id);
   const progress = quest ? Number(quest.progress) : 0;
   const status = quest ? quest.status : "IN_PROGRESS";
   
@@ -618,7 +619,7 @@ function checkInteraction() {
   
   let closestBlock = null;
   let minDist = 50;
-  for (const p of state.posts) {
+  for (const p of (state.posts || [])) {
     const blockX = p.x * TILE_SIZE;
     const distance = Math.abs(player.x - blockX);
     if (distance < minDist) {
@@ -645,7 +646,7 @@ function handleCanvasClick(e) {
     }
   }
   
-  for (const p of state.posts) {
+  for (const p of (state.posts || [])) {
     const blockX = p.x * TILE_SIZE;
     const blockY = GROUND_Y - 48;
     if (clickX >= blockX && clickX <= blockX + 48 && e.clientY - rect.top >= blockY && e.clientY - rect.top <= GROUND_Y) {
@@ -819,7 +820,7 @@ function drawGame() {
     ctx.textAlign = "center";
     ctx.fillText(npc.name.split(' ')[0], npcX + 16, npcY - 21);
     
-    const quest = state.quests.find(q => q.questType === npc.id);
+    const quest = (state.quests || []).find(q => q.questType === npc.id);
     const progress = quest ? Number(quest.progress) : 0;
     const status = quest ? quest.status : "IN_PROGRESS";
     
@@ -844,7 +845,7 @@ function drawGame() {
   });
   
   // Draw Block Posts
-  state.posts.forEach(p => {
+  (state.posts || []).forEach(p => {
     const bx = p.x * TILE_SIZE;
     const by = GROUND_Y - 48;
     
