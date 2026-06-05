@@ -1,6 +1,7 @@
 /**
  * Minecraft style Educational Game - Backend Headless JSON API (Code.gs)
  * Decoupled API endpoint with automatic CORS support via ContentService.
+ * Expanded to support Gold and Pickaxe purchase transactions.
  */
 
 // Headless API Routing
@@ -55,6 +56,9 @@ function doGet(e) {
     }
     else if (action === 'updateSetting') {
       result = updateSetting(e.parameter.key, e.parameter.value);
+    }
+    else if (action === 'buyPickaxe') {
+      result = buyPickaxe(e.parameter.userId, e.parameter.pickaxeTier, Number(e.parameter.cost));
     }
     else {
       throw new Error("Invalid action: " + action);
@@ -127,7 +131,7 @@ function initDatabase() {
   var ss = getSpreadsheet();
   
   var sheetsConfig = {
-    "Users": ["userId", "nickname", "joinedDate"],
+    "Users": ["userId", "nickname", "joinedDate", "gold"],
     "Posts": ["postId", "category", "author", "title", "summary", "paragraph", "imageUrl", "x", "y", "createdDate"],
     "Views": ["viewId", "postId", "userId", "viewedDate"],
     "Likes": ["likeId", "postId", "userId", "likedDate"],
@@ -149,6 +153,25 @@ function initDatabase() {
       headerRange.setBackground("#374151");
       headerRange.setFontColor("#ffffff");
       sheet.setFrozenRows(1);
+    }
+  }
+  
+  // Database Migration: check if gold column exists in Users
+  var userSheet = ss.getSheetByName("Users");
+  if (userSheet && userSheet.getLastColumn() < 4) {
+    userSheet.getRange(1, 4).setValue("gold");
+    userSheet.getRange(1, 4).setFontWeight("bold");
+    userSheet.getRange(1, 4).setBackground("#374151");
+    userSheet.getRange(1, 4).setFontColor("#ffffff");
+    
+    var lastRow = userSheet.getLastRow();
+    if (lastRow > 1) {
+      var goldRange = userSheet.getRange(2, 4, lastRow - 1, 1);
+      var defaultGolds = [];
+      for (var i = 2; i <= lastRow; i++) {
+        defaultGolds.push([100]); // 100 default gold
+      }
+      goldRange.setValues(defaultGolds);
     }
   }
   
@@ -185,6 +208,44 @@ function getSheetDataAsJson(sheetName) {
   return jsonArray;
 }
 
+// Get user gold balance
+function getUserGold(userId) {
+  var users = getSheetDataAsJson("Users");
+  var user = users.find(function(u) { return u.userId === userId; });
+  return user ? Number(user.gold || 0) : 0;
+}
+
+// Change user gold balance
+function changeUserGold(userId, amount) {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName("Users");
+  var range = sheet.getDataRange();
+  var values = range.getValues();
+  var foundRowIndex = -1;
+  
+  for (var i = 1; i < values.length; i++) {
+    if (values[i][0] === userId) {
+      foundRowIndex = i + 1;
+      break;
+    }
+  }
+  
+  if (foundRowIndex !== -1) {
+    var currentGold = Number(values[foundRowIndex - 1][3] || 0);
+    sheet.getRange(foundRowIndex, 4).setValue(currentGold + amount);
+  }
+}
+
+// Buy pickaxe
+function buyPickaxe(userId, pickaxeTier, cost) {
+  var currentGold = getUserGold(userId);
+  if (currentGold < cost) throw new Error("Gold가 부족합니다!");
+  
+  changeUserGold(userId, -cost);
+  awardBadge(userId, "pickaxe_" + pickaxeTier);
+  return getGameData(userId);
+}
+
 // User Registration / Login
 function registerOrLoginUser(nickname) {
   initDatabase();
@@ -204,7 +265,7 @@ function registerOrLoginUser(nickname) {
   }
   
   var userId = "usr_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1000);
-  var newUserRow = [userId, nickname, new Date()];
+  var newUserRow = [userId, nickname, new Date(), 100]; // Start with 100 gold
   userSheet.appendRow(newUserRow);
   
   var questSheet = ss.getSheetByName("Quests");
@@ -219,7 +280,8 @@ function registerOrLoginUser(nickname) {
   return {
     userId: userId,
     nickname: nickname,
-    joinedDate: newUserRow[2]
+    joinedDate: newUserRow[2],
+    gold: 100
   };
 }
 
@@ -294,6 +356,7 @@ function addPost(userId, category, author, title, summary, paragraph, imageUrl) 
   
   postSheet.appendRow(newPostRow);
   addXpTransaction(userId, 5, "Submitted Post");
+  changeUserGold(userId, 50); // Reward 50 Gold for creating block
   
   return getGameData(userId);
 }
@@ -338,6 +401,7 @@ function getGameData(userId) {
     userId: userId,
     xp: stats.xp,
     level: stats.level,
+    gold: getUserGold(userId),
     posts: processedPosts,
     badges: userBadges,
     quests: userQuests,
@@ -400,7 +464,6 @@ function readBlock(userId, postId) {
   
   var post = posts.find(function(p) { return p.postId === postId; });
   
-  // Dummy quest check trigger handler
   if (postId === "post_dummy_quest_trigger") {
     checkMilestoneBadges(userId);
     updateQuestProgress(userId, null);
@@ -421,6 +484,7 @@ function readBlock(userId, postId) {
     
     if (nickname.toLowerCase() !== post.author.toLowerCase()) {
       addXpTransaction(userId, 10, "Read Block: " + post.title);
+      changeUserGold(userId, 15); // Reward 15 Gold for reading block
       checkMilestoneBadges(userId);
       updateQuestProgress(userId, post);
     }
@@ -447,10 +511,12 @@ function toggleLike(userId, postId) {
     likeSheet.appendRow([likeId, postId, userId, new Date()]);
     
     addXpTransaction(userId, 2, "Liked Block: " + post.title);
+    changeUserGold(userId, 5); // Liker gets 5 Gold
     
     var authorUser = users.find(function(u) { return u.nickname.toLowerCase() === post.author.toLowerCase(); });
     if (authorUser && authorUser.userId !== userId) {
       addXpTransaction(authorUser.userId, 3, "Received Like on: " + post.title);
+      changeUserGold(authorUser.userId, 10); // Author gets 10 Gold
       checkMilestoneBadges(authorUser.userId);
     }
     
@@ -472,6 +538,8 @@ function addComment(userId, postId, authorNickname, commentText) {
   commentSheet.appendRow([commentId, postId, authorNickname, commentText, new Date()]);
   
   addXpTransaction(userId, 5, "Added Comment");
+  changeUserGold(userId, 20); // Reward 20 Gold for commenting
+  
   updateQuestProgress(userId, null, "COMMENT");
   checkMilestoneBadges(userId);
   
@@ -530,25 +598,32 @@ function updateQuestProgress(userId, post, actionType) {
         
         var rewardXp = 0;
         var badgeType = "";
+        var rewardGold = 0;
         
         if (qType === "READ_3") {
           rewardXp = 50;
+          rewardGold = 100;
           badgeType = "독서 입문자";
         } else if (qType === "LIKE_5") {
           rewardXp = 30;
+          rewardGold = 80;
           badgeType = "공감의 요정";
         } else if (qType === "COMMENT_2") {
           rewardXp = 40;
+          rewardGold = 100;
           badgeType = "친절한 이웃";
         } else if (qType === "FIND_GREAT") {
           rewardXp = 50;
+          rewardGold = 100;
           badgeType = "역사 탐험가";
         } else if (qType === "FIND_POOR") {
           rewardXp = 50;
+          rewardGold = 100;
           badgeType = "따뜻한 시선";
         }
         
         addXpTransaction(userId, rewardXp, "Quest Completed: " + qType);
+        changeUserGold(userId, rewardGold); // Quest completion gold reward
         awardBadge(userId, badgeType);
       }
     }

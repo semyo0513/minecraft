@@ -1,6 +1,7 @@
 /**
  * Minecraft style Educational Game - Client Side Static Script (script.js)
  * Interacts with Google Apps Script Web App API using Fetch CORS calls.
+ * Implements highly animated clicker mining mechanics, particles, and pickaxe shop.
  */
 
 // Global Game State
@@ -8,11 +9,13 @@ const state = {
   user: null,
   xp: 0,
   level: 1,
+  gold: 100,
   posts: [],
   badges: [],
   quests: [],
   recommendedPost: null,
-  recommendedShown: false
+  recommendedShown: false,
+  postHp: {} // postId -> { hp, maxHp }
 };
 
 // Canvas Engine Configuration
@@ -21,6 +24,15 @@ const TILE_SIZE = 32; // pixel size of one grid block
 const WORLD_UNITS = 1000; // Total horizontal grid tiles
 const WORLD_WIDTH = WORLD_UNITS * TILE_SIZE; // 32,000 pixels
 let GROUND_Y = 0; // Calculated on canvas resize
+
+// Pickaxe upgrade configurations
+const pickaxes = {
+  wood: { tier: 'wood', name: '나무 곡괭이', emoji: '🪵', power: 1, cost: 0, color: '#ab7f56' },
+  stone: { tier: 'stone', name: '돌 곡괭이', emoji: '🪨', power: 2, cost: 100, color: '#7a7a7a', badge: 'pickaxe_stone' },
+  iron: { tier: 'iron', name: '철 곡괭이', emoji: '⛏️', power: 3, cost: 300, color: '#d1d5db', badge: 'pickaxe_iron' },
+  gold: { tier: 'gold', name: '금 곡괭이', emoji: '🪙', power: 4, cost: 600, color: '#fbbf24', badge: 'pickaxe_gold' },
+  diamond: { tier: 'diamond', name: '다이아몬드 곡괭이', emoji: '💎', power: 5, cost: 1000, color: '#22d3ee', badge: 'pickaxe_diamond' }
+};
 
 // Player Object
 const player = {
@@ -37,14 +49,31 @@ const player = {
   direction: 1, // 1 = right, -1 = left
   animFrame: 0,
   animTimer: 0,
-  isMoving: false
+  isMoving: false,
+  
+  // Mining animations variables
+  isSwinging: false,
+  swingAngle: 0,
+  swingTimer: 0
 };
 
-// Camera Object
+// Camera Object with screen shake
 const camera = {
   x: 0,
   y: 0,
-  lerpSpeed: 0.1
+  lerpSpeed: 0.1,
+  
+  // Screen shake variables
+  shakeTimer: 0,
+  shakeIntensity: 0,
+  shakeX: 0,
+  shakeY: 0
+};
+
+// Visual Juice Particles and Floating text
+const juice = {
+  particles: [],     // Array of gravity-simulated chips
+  floatingTexts: []  // Bouncing damage/gold/XP numbers
 };
 
 // Static NPCs list
@@ -73,7 +102,7 @@ const badgeMetadata = {
 // Input State
 const keys = {};
 
-// Helper: Make Fetch API request using GET (to bypass CORS preflight OPTIONS block on GAS)
+// Helper: Make Fetch API request using GET
 function callApi(action, params = {}) {
   const apiUrl = localStorage.getItem('mc_api_url');
   if (!apiUrl) {
@@ -81,7 +110,6 @@ function callApi(action, params = {}) {
     return Promise.reject(new Error("API URL not configured"));
   }
 
-  // Compile search query string
   const url = new URL(apiUrl);
   url.searchParams.set('action', action);
   for (const k in params) {
@@ -119,7 +147,6 @@ function initUI() {
   canvas = document.getElementById('game-canvas');
   ctx = canvas.getContext('2d');
   
-  // Resize handler
   window.addEventListener('resize', resizeCanvas);
   resizeCanvas();
 
@@ -147,6 +174,9 @@ function initUI() {
     openModal('modal-api-settings');
   });
   document.getElementById('api-url-save-btn').addEventListener('click', saveApiUrlSettings);
+
+  // Shop trigger
+  document.getElementById('shop-trigger-btn').addEventListener('click', openShopModal);
 
   // Teleports
   document.getElementById('tp-great-btn').addEventListener('click', () => teleportPlayer(100));
@@ -188,14 +218,13 @@ function initUI() {
     document.getElementById('mobile-controller').classList.add('hidden');
   }
 
-  canvas.addEventListener('click', handleCanvasClick);
+  canvas.addEventListener('mousedown', handleCanvasClick);
 }
 
 // Check if API URL is set and verify local session
 function checkApiAndSession() {
   const apiUrl = localStorage.getItem('mc_api_url');
   if (!apiUrl) {
-    // Show login page, but force open settings modal
     showScreen('screen-login');
     openModal('modal-api-settings');
   } else {
@@ -203,7 +232,7 @@ function checkApiAndSession() {
   }
 }
 
-// Save API URL configuration and trigger database check
+// Save API URL configuration
 function saveApiUrlSettings() {
   let urlVal = document.getElementById('api-url-input').value.trim();
   if (!urlVal) {
@@ -211,11 +240,9 @@ function saveApiUrlSettings() {
     return;
   }
 
-  // Store in cache
   localStorage.setItem('mc_api_url', urlVal);
   closeModal('modal-api-settings');
   
-  // Verify API by running setup check
   showScreen('screen-loading');
   document.getElementById('loading-message').innerText = "API 서버에 접속 중입니다...";
   
@@ -271,14 +298,25 @@ function loadGameData() {
     .then((gameData) => {
       state.xp = gameData.xp;
       state.level = gameData.level;
+      state.gold = gameData.gold || 0;
       state.posts = gameData.posts;
       state.badges = gameData.badges;
       state.quests = gameData.quests;
       state.recommendedPost = gameData.recommendedPost;
       
+      // Initialize block HP if uninitialized
+      (state.posts || []).forEach(p => {
+        if (!state.postHp[p.postId]) {
+          // Normal category = 5 hits, Rare (Hero / Migrant worker) = 8 hits
+          const isRare = ["Hero", "Migrant worker", "영웅", "이주노동자"].indexOf(p.category) !== -1;
+          const max = isRare ? 8 : 5;
+          state.postHp[p.postId] = { hp: max, maxHp: max };
+        }
+      });
+      
       updateHUD();
       showScreen('screen-game');
-      resizeCanvas();
+      resizeCanvas(); // Trigger resizing after showing container to ensure correct sizes!
       
       // Start Game loop
       if (!gameLoopId) {
@@ -318,6 +356,7 @@ function updateHUD() {
   document.getElementById('hud-nickname').innerText = state.user.nickname;
   document.getElementById('hud-avatar').innerText = state.user.nickname.charAt(0).toUpperCase();
   document.getElementById('hud-level').innerText = "Lv. " + state.level;
+  document.getElementById('hud-gold-text').innerText = state.gold + " G";
   
   const currentLvlMin = Math.pow(state.level - 1, 2) * 100;
   const nextLvlMin = Math.pow(state.level, 2) * 100;
@@ -334,6 +373,93 @@ function teleportPlayer(unitX) {
   player.vx = 0;
   player.vy = 0;
   camera.x = player.x - canvas.width / 2;
+}
+
+// Get equipped pickaxe config (highest owned tier)
+function getEquippedPickaxe() {
+  const badges = state.badges || [];
+  if (badges.includes('pickaxe_diamond')) return pickaxes.diamond;
+  if (badges.includes('pickaxe_gold')) return pickaxes.gold;
+  if (badges.includes('pickaxe_iron')) return pickaxes.iron;
+  if (badges.includes('pickaxe_stone')) return pickaxes.stone;
+  return pickaxes.wood; // Default
+}
+
+// Open pickaxe shop modal
+function openShopModal() {
+  document.getElementById('shop-gold-balance').innerText = state.gold;
+  const container = document.getElementById('shop-items-container');
+  container.innerHTML = '';
+  
+  const equipped = getEquippedPickaxe();
+  
+  for (const tier in pickaxes) {
+    const pick = pickaxes[tier];
+    if (tier === 'wood') continue; // Wood is not buyable
+    
+    const isOwned = (state.badges || []).includes(pick.badge);
+    const isEquipped = (equipped.tier === tier);
+    
+    let btnHtml = '';
+    if (isEquipped) {
+      btnHtml = `<button class="pixel-btn btn-disabled" style="width:100%;">장착됨</button>`;
+    } else if (isOwned) {
+      btnHtml = `<button class="pixel-btn pixel-btn-primary" style="width:100%; font-size:9px;" onclick="equipPickaxe('${tier}')">장착하기</button>`;
+    } else {
+      const canBuy = state.gold >= pick.cost;
+      btnHtml = `<button class="pixel-btn ${canBuy ? 'pixel-btn-primary' : 'btn-disabled'}" style="width:100%; font-size:9px;" onclick="buyPickaxe('${tier}', ${pick.cost})">구매하기</button>`;
+    }
+    
+    const itemCard = document.createElement('div');
+    itemCard.className = 'shop-item';
+    itemCard.innerHTML = `
+      <div class="shop-pick-title">${pick.name}</div>
+      <div class="shop-pick-preview">${pick.emoji}</div>
+      <div class="shop-pick-stats">파괴력: +${pick.power}</div>
+      <div class="shop-pick-price">🪙 ${pick.cost} G</div>
+      ${btnHtml}
+    `;
+    container.appendChild(itemCard);
+  }
+  
+  openModal('modal-shop');
+}
+
+// Purchase Pickaxe
+function buyPickaxe(tier, cost) {
+  if (state.gold < cost) {
+    alert("골드가 부족합니다! 인물을 탐색하고 댓글을 달아 골드를 획득해 보세요.");
+    return;
+  }
+  
+  closeModal('modal-shop');
+  showScreen('screen-loading');
+  document.getElementById('loading-message').innerText = `${pickaxes[tier].name} 구매 및 제작 중...`;
+  
+  callApi('buyPickaxe', { userId: state.user.userId, pickaxeTier: tier, cost: cost })
+    .then((gameData) => {
+      state.xp = gameData.xp;
+      state.level = gameData.level;
+      state.gold = gameData.gold;
+      state.posts = gameData.posts;
+      state.badges = gameData.badges;
+      state.quests = gameData.quests;
+      
+      updateHUD();
+      showScreen('screen-game');
+      alert(`${pickaxes[tier].name} 구매 완료! 장착되었습니다.`);
+    })
+    .catch((err) => {
+      showScreen('screen-game');
+    });
+}
+
+// Simple local equip trigger
+function equipPickaxe(tier) {
+  // Equipped pickaxe is automatically the highest tier owned in this setup.
+  // Showing alert to keep it clear.
+  alert(`${pickaxes[tier].name}을 장착했습니다.`);
+  openShopModal();
 }
 
 // Submit a new block post
@@ -372,9 +498,23 @@ function submitPost() {
     
     state.xp = gameData.xp;
     state.level = gameData.level;
+    state.gold = gameData.gold;
     state.posts = gameData.posts;
     state.badges = gameData.badges;
     state.quests = gameData.quests;
+    
+    // Auto sync HP
+    (state.posts || []).forEach(p => {
+      if (!state.postHp[p.postId]) {
+        const isRare = ["Hero", "Migrant worker", "영웅", "이주노동자"].indexOf(p.category) !== -1;
+        const max = isRare ? 8 : 5;
+        state.postHp[p.postId] = { hp: max, maxHp: max };
+      }
+    });
+    
+    // Spawn floating text for Gold
+    spawnFloatingText(player.x, player.y - 40, "+50 Gold", "#ffd700");
+    spawnFloatingText(player.x, player.y - 20, "+5 XP", "#55ff55");
     
     updateHUD();
     showScreen('screen-game');
@@ -458,8 +598,17 @@ function openBlockDetail(postId) {
   // Record view logic
   callApi('readBlock', { userId: state.user.userId, postId: postId })
     .then((gameData) => {
+      // Awarded Gold! Bouncing text
+      const prevGold = state.gold;
+      const goldDiff = gameData.gold - prevGold;
+      if (goldDiff > 0) {
+        spawnFloatingText(player.x, player.y - 40, `+${goldDiff} Gold`, "#ffd700");
+        spawnFloatingText(player.x, player.y - 20, "+10 XP", "#55ff55");
+      }
+      
       state.xp = gameData.xp;
       state.level = gameData.level;
+      state.gold = gameData.gold;
       state.posts = gameData.posts;
       state.badges = gameData.badges;
       state.quests = gameData.quests;
@@ -519,8 +668,17 @@ function submitComment() {
     commentText: commentText
   })
   .then((gameData) => {
+    // Reward Gold!
+    const prevGold = state.gold;
+    const goldDiff = gameData.gold - prevGold;
+    if (goldDiff > 0) {
+      spawnFloatingText(player.x, player.y - 40, `+${goldDiff} Gold`, "#ffd700");
+      spawnFloatingText(player.x, player.y - 20, "+5 XP", "#55ff55");
+    }
+    
     state.xp = gameData.xp;
     state.level = gameData.level;
+    state.gold = gameData.gold;
     state.posts = gameData.posts;
     state.badges = gameData.badges;
     state.quests = gameData.quests;
@@ -535,8 +693,16 @@ function handleLikeToggle() {
   
   callApi('toggleLike', { userId: state.user.userId, postId: selectedPostId })
     .then((gameData) => {
+      const prevGold = state.gold;
+      const goldDiff = gameData.gold - prevGold;
+      if (goldDiff > 0) {
+        spawnFloatingText(player.x, player.y - 40, `+${goldDiff} Gold`, "#ffd700");
+        spawnFloatingText(player.x, player.y - 20, "+2 XP", "#55ff55");
+      }
+      
       state.xp = gameData.xp;
       state.level = gameData.level;
+      state.gold = gameData.gold;
       state.posts = gameData.posts;
       state.badges = gameData.badges;
       state.quests = gameData.quests;
@@ -589,8 +755,15 @@ function openNpcDialogue(npc) {
       
       callApi('readBlock', { userId: state.user.userId, postId: "post_dummy_quest_trigger" })
         .then((gameData) => {
+          const prevGold = state.gold;
+          const goldDiff = gameData.gold - prevGold;
+          if (goldDiff > 0) {
+            spawnFloatingText(player.x, player.y - 40, `+${goldDiff} Gold`, "#ffd700");
+          }
+          
           state.xp = gameData.xp;
           state.level = gameData.level;
+          state.gold = gameData.gold;
           state.posts = gameData.posts;
           state.badges = gameData.badges;
           state.quests = gameData.quests;
@@ -607,7 +780,52 @@ function openNpcDialogue(npc) {
   openModal('modal-npc');
 }
 
+// Mine Ores (hit logic)
+function mineOreBlock(postId) {
+  const p = (state.posts || []).find(item => item.postId === postId);
+  if (!p) return;
+  
+  const equipped = getEquippedPickaxe();
+  
+  // Set swing animation state
+  player.isSwinging = true;
+  player.swingAngle = -Math.PI / 4;
+  player.swingTimer = 8; // duration of animation
+  
+  // Reduce HP
+  const blockData = state.postHp[postId];
+  blockData.hp -= equipped.power;
+  
+  // Shake block visuals locally using helper attributes
+  p.shakeTime = 6;
+  
+  // Emit Stone Chips
+  const blockColor = ["Hero", "Volunteer", "Independence fighter", "Educator", "Community contributor", "영웅", "봉사자", "독립운동가", "교육자", "지역사회 공헌 인물"].indexOf(p.category) !== -1 ? "#06b6d4" : "#ef4444";
+  spawnHitParticles(p.x * TILE_SIZE + 24, GROUND_Y - 24, blockColor);
+  
+  // Spawn Damage Text
+  spawnFloatingText(p.x * TILE_SIZE + 24, GROUND_Y - 48, `-${equipped.power} HP`, "#fca5a5");
+  
+  // Trigger light Camera shake
+  triggerCameraShake(4, 2);
+  
+  if (blockData.hp <= 0) {
+    // Shattered!
+    blockData.hp = 0;
+    
+    // Large Sparkles
+    spawnShatterParticles(p.x * TILE_SIZE + 24, GROUND_Y - 24, blockColor);
+    
+    // Screen shake
+    triggerCameraShake(12, 6);
+    
+    // Open reading detail panel
+    openBlockDetail(postId);
+  }
+}
+
 function checkInteraction() {
+  // Check NPCs collision
   for (const npc of npcs) {
     const npcX = npc.unitX * TILE_SIZE;
     const distance = Math.abs(player.x - npcX);
@@ -617,8 +835,9 @@ function checkInteraction() {
     }
   }
   
+  // Check Blocks collision
   let closestBlock = null;
-  let minDist = 50;
+  let minDist = 60;
   for (const p of (state.posts || [])) {
     const blockX = p.x * TILE_SIZE;
     const distance = Math.abs(player.x - blockX);
@@ -627,18 +846,25 @@ function checkInteraction() {
       minDist = distance;
     }
   }
+  
   if (closestBlock) {
-    openBlockDetail(closestBlock.postId);
+    const isMined = state.postHp[closestBlock.postId] && state.postHp[closestBlock.postId].hp <= 0;
+    if (isMined) {
+      openBlockDetail(closestBlock.postId);
+    } else {
+      mineOreBlock(closestBlock.postId);
+    }
   }
 }
 
+// Click on Canvas coordinate
 function handleCanvasClick(e) {
   const rect = canvas.getBoundingClientRect();
   const clickX = e.clientX - rect.left + camera.x;
   
+  // Check if click was on NPC
   for (const npc of npcs) {
     const npcX = npc.unitX * TILE_SIZE;
-    const npcWidth = 32;
     const npcY = GROUND_Y - 48;
     if (clickX >= npcX - 16 && clickX <= npcX + 32 && e.clientY - rect.top >= npcY && e.clientY - rect.top <= GROUND_Y) {
       openNpcDialogue(npc);
@@ -646,16 +872,28 @@ function handleCanvasClick(e) {
     }
   }
   
+  // Check if click was on block
   for (const p of (state.posts || [])) {
     const blockX = p.x * TILE_SIZE;
     const blockY = GROUND_Y - 48;
     if (clickX >= blockX && clickX <= blockX + 48 && e.clientY - rect.top >= blockY && e.clientY - rect.top <= GROUND_Y) {
-      openBlockDetail(p.postId);
+      const isMined = state.postHp[p.postId] && state.postHp[p.postId].hp <= 0;
+      
+      // Face direction of click
+      if (blockX > player.x) player.direction = 1;
+      else player.direction = -1;
+      
+      if (isMined) {
+        openBlockDetail(p.postId);
+      } else {
+        mineOreBlock(p.postId);
+      }
       return;
     }
   }
 }
 
+// Escape HTML utility
 function escapeHtml(text) {
   const map = {
     '&': '&amp;',
@@ -665,6 +903,93 @@ function escapeHtml(text) {
     "'": '&#039;'
   };
   return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+// ==================== JUICE EFFECTS ENGINE ====================
+
+// Camera Shake activator
+function triggerCameraShake(intensity, durationFrames) {
+  camera.shakeIntensity = intensity;
+  camera.shakeTimer = durationFrames;
+}
+
+// Particle emitter - Stone Chips on hit
+function spawnHitParticles(x, y, color) {
+  const count = 6 + Math.floor(Math.random() * 5);
+  for (let i = 0; i < count; i++) {
+    juice.particles.push({
+      x: x,
+      y: y,
+      vx: (Math.random() - 0.5) * 6,
+      vy: -2 - Math.random() * 6,
+      color: color,
+      size: 2 + Math.floor(Math.random() * 4),
+      gravity: 0.4,
+      life: 0,
+      maxLife: 20 + Math.floor(Math.random() * 15)
+    });
+  }
+}
+
+// Particle emitter - Gems/Stars on shatter
+function spawnShatterParticles(x, y, color) {
+  const count = 20 + Math.floor(Math.random() * 10);
+  for (let i = 0; i < count; i++) {
+    juice.particles.push({
+      x: x,
+      y: y,
+      vx: (Math.random() - 0.5) * 10,
+      vy: -4 - Math.random() * 8,
+      color: i % 2 === 0 ? "#ffd700" : color, // Gold or Block Color
+      size: 3 + Math.floor(Math.random() * 5),
+      gravity: 0.35,
+      life: 0,
+      maxLife: 30 + Math.floor(Math.random() * 20),
+      isGem: true
+    });
+  }
+}
+
+// Spawn Floating damage/points text
+function spawnFloatingText(x, y, text, color) {
+  juice.floatingTexts.push({
+    x: x,
+    y: y,
+    vy: -2.5 - Math.random() * 1.5,
+    text: text,
+    color: color,
+    size: text.includes("XP") || text.includes("Gold") ? 9 : 8,
+    life: 0,
+    maxLife: 45
+  });
+}
+
+// Update particle actions
+function updateJuice() {
+  // Particles updates
+  for (let i = juice.particles.length - 1; i >= 0; i--) {
+    const p = juice.particles[i];
+    p.x += p.vx;
+    p.vy += p.gravity;
+    p.y += p.vy;
+    p.life++;
+    
+    if (p.life >= p.maxLife) {
+      juice.particles.splice(i, 1);
+    }
+  }
+
+  // Floating text updates
+  for (let i = juice.floatingTexts.length - 1; i >= 0; i--) {
+    const t = juice.floatingTexts[i];
+    t.y += t.vy;
+    t.vy *= 0.96; // decelerate upward velocity
+    t.life++;
+    
+    if (t.life >= t.maxLife) {
+      juice.floatingTexts.splice(i, 1);
+    }
+  }
 }
 
 // ==================== 2D CANVAS GAME ENGINE ====================
@@ -693,7 +1018,6 @@ function updatePhysics() {
   }
   
   player.vy += player.gravity;
-  
   player.x += player.vx;
   player.y += player.vy;
   
@@ -716,6 +1040,16 @@ function updatePhysics() {
   camera.x += (targetCamX - camera.x) * camera.lerpSpeed;
   camera.x = Math.max(0, Math.min(camera.x, WORLD_WIDTH - canvas.width));
   
+  // Camera Shake trigger math
+  if (camera.shakeTimer > 0) {
+    camera.shakeTimer--;
+    camera.shakeX = (Math.random() - 0.5) * camera.shakeIntensity;
+    camera.shakeY = (Math.random() - 0.5) * camera.shakeIntensity;
+  } else {
+    camera.shakeX = 0;
+    camera.shakeY = 0;
+  }
+  
   if (player.isMoving && player.grounded) {
     player.animTimer++;
     if (player.animTimer > 8) {
@@ -725,85 +1059,120 @@ function updatePhysics() {
   } else {
     player.animFrame = 0;
   }
+  
+  // Pickaxe swing animation timer
+  if (player.isSwinging) {
+    player.swingTimer--;
+    // Rotate pickaxe forward
+    player.swingAngle += Math.PI / 10;
+    if (player.swingTimer <= 0) {
+      player.isSwinging = false;
+      player.swingAngle = 0;
+    }
+  }
+  
+  // Block shaking timer reduction
+  (state.posts || []).forEach(p => {
+    if (p.shakeTime && p.shakeTime > 0) {
+      p.shakeTime--;
+    }
+  });
+  
+  updateJuice();
 }
 
 function drawGame() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   
-  const skyGrad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
-  skyGrad.addColorStop(0, "#5b90f6");
-  skyGrad.addColorStop(1, "#94bbfd");
-  ctx.fillStyle = skyGrad;
+  // 1. Draw Cavern dark stone background walls
+  ctx.fillStyle = "#1e293b"; // Stone gray wall
   ctx.fillRect(0, 0, canvas.width, GROUND_Y);
   
+  // Cavern details parallax back-drawings
   ctx.save();
-  ctx.translate(-camera.x, 0);
+  ctx.translate(-camera.x * 0.3, 0); // Parallax factor
   
-  // Parallax Sun
-  ctx.fillStyle = "#fff7a3";
-  ctx.fillRect(400 - camera.x * 0.1, 80, 48, 48);
-  ctx.strokeStyle = "#ffc03d";
-  ctx.lineWidth = 4;
-  ctx.strokeRect(400 - camera.x * 0.1, 80, 48, 48);
-  
-  // Parallax Clouds
-  ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
-  const cloudOffset = -camera.x * 0.2;
-  for (let i = 0; i < 20; i++) {
-    const cx = (i * 1200) + cloudOffset;
-    ctx.fillRect(cx, 100, 120, 32);
-    ctx.fillRect(cx + 20, 84, 80, 16);
+  // Neon luminous cavern crystals in the wall background
+  for (let i = 0; i < 40; i++) {
+    const cx = i * 800 + 100;
+    const isGreatZone = cx < (500 * TILE_SIZE);
+    
+    // Cyan sapphire vs Ruby red glowing crystal backgrounds
+    ctx.fillStyle = isGreatZone ? "rgba(6, 182, 212, 0.15)" : "rgba(239, 68, 68, 0.15)";
+    ctx.fillRect(cx, 120, 48, 80);
+    ctx.fillRect(cx + 80, 240, 60, 40);
   }
+  ctx.restore();
   
-  // Town Border Divider (x = 500)
+  // Apply camera translation with shake effects
+  ctx.save();
+  ctx.translate(-camera.x + camera.shakeX, camera.shakeY);
+  
+  // 2. Stalactites drawing on cave roof
+  ctx.fillStyle = "#0f172a"; // dark roof slate
+  ctx.fillRect(0, 0, WORLD_WIDTH, 20);
+  
+  ctx.beginPath();
+  for (let sx = 0; sx < WORLD_WIDTH; sx += 64) {
+    ctx.moveTo(sx, 20);
+    ctx.lineTo(sx + 32, 60 + (sx % 3) * 15);
+    ctx.lineTo(sx + 64, 20);
+  }
+  ctx.closePath();
+  ctx.fill();
+  
+  // 3. Town Biome separation divider line
   const borderX = 500 * TILE_SIZE;
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.15)";
-  ctx.lineWidth = 6;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.3)";
+  ctx.lineWidth = 8;
   ctx.beginPath();
   ctx.moveTo(borderX, 0);
   ctx.lineTo(borderX, GROUND_Y);
   ctx.stroke();
   
-  // Border Signboard
-  ctx.fillStyle = "#8a572a";
+  // Signboard
+  ctx.fillStyle = "#4a3b32";
   ctx.fillRect(borderX - 90, GROUND_Y - 120, 180, 40);
-  ctx.fillStyle = "#000";
+  ctx.fillStyle = "#111";
   ctx.fillRect(borderX - 90, GROUND_Y - 120, 180, 40);
-  ctx.strokeStyle = "#c6c6c6";
+  ctx.strokeStyle = "#8b8b8b";
   ctx.lineWidth = 3;
   ctx.strokeRect(borderX - 90, GROUND_Y - 120, 180, 40);
   
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 9px var(--font-retro)";
   ctx.textAlign = "center";
-  ctx.fillText("← 위대한 마을 | 소외된 마을 →", borderX, GROUND_Y - 100);
+  ctx.fillText("← 위대한 광산 | 소외된 광산 →", borderX, GROUND_Y - 100);
   
-  // Sign Post Stick
-  ctx.fillStyle = "#634731";
+  ctx.fillStyle = "#333";
   ctx.fillRect(borderX - 8, GROUND_Y - 80, 16, 80);
   
-  // Ground
-  ctx.fillStyle = "#55aa55";
-  ctx.fillRect(0, GROUND_Y, WORLD_WIDTH, 12);
-  ctx.fillStyle = "#805b36";
-  ctx.fillRect(0, GROUND_Y + 12, WORLD_WIDTH, 96 - 12);
+  // 4. Ground Blocks (Cavern stone floor)
+  ctx.fillStyle = "#374151"; // grey stone floor
+  ctx.fillRect(0, GROUND_Y, WORLD_WIDTH, 14);
+  ctx.fillStyle = "#1f2937"; // deep stone bedrock
+  ctx.fillRect(0, GROUND_Y + 14, WORLD_WIDTH, 96 - 14);
   
-  ctx.fillStyle = "#449944";
-  for (let gx = 0; gx < WORLD_WIDTH; gx += TILE_SIZE) {
-    ctx.fillRect(gx, GROUND_Y, 2, 12);
+  // Cavern floor brick grid details
+  ctx.fillStyle = "#111827";
+  for (let gx = 0; gx < WORLD_WIDTH; gx += 48) {
+    ctx.fillRect(gx, GROUND_Y, 2, 96);
+    ctx.fillRect(gx, GROUND_Y + 24, 48, 2);
   }
   
-  // Draw NPCs
+  // 5. Draw NPCs
   npcs.forEach(npc => {
     const npcX = npc.unitX * TILE_SIZE;
     const npcY = GROUND_Y - 48;
     
-    ctx.fillStyle = "#ab7f56";
+    // Body
+    ctx.fillStyle = "#475569";
     ctx.fillRect(npcX, npcY + 16, 32, 32);
     ctx.strokeStyle = "#000";
     ctx.lineWidth = 3;
     ctx.strokeRect(npcX, npcY + 16, 32, 32);
     
+    // Head
     ctx.fillStyle = "#e5c59e";
     ctx.fillRect(npcX + 4, npcY, 24, 20);
     ctx.strokeRect(npcX + 4, npcY, 24, 20);
@@ -844,53 +1213,138 @@ function drawGame() {
     }
   });
   
-  // Draw Block Posts
+  // 6. Draw Block Posts (Mineable Ores)
   (state.posts || []).forEach(p => {
     const bx = p.x * TILE_SIZE;
     const by = GROUND_Y - 48;
     
     const isGreat = ["Hero", "Volunteer", "Independence fighter", "Educator", "Community contributor",
                      "영웅", "봉사자", "독립운동가", "교육자", "지역사회 공헌 인물"].indexOf(p.category) !== -1;
+                     
+    const blockData = state.postHp[p.postId] || { hp: 5, maxHp: 5 };
+    const isMined = blockData.hp <= 0;
     
-    const blockColor = isGreat ? "#4dedf5" : "#ff5555";
-    const topColor = isGreat ? "#ffffff" : "#aa3a3a";
+    // Add offset for block shaking when hit
+    let shakeOffset = 0;
+    if (p.shakeTime && p.shakeTime > 0) {
+      shakeOffset = (p.shakeTime % 2 === 0 ? 1 : -1) * 4;
+    }
     
-    ctx.fillStyle = blockColor;
-    ctx.fillRect(bx, by, 48, 48);
-    ctx.strokeStyle = "#000000";
-    ctx.lineWidth = 4;
-    ctx.strokeRect(bx, by, 48, 48);
+    if (isMined) {
+      // Draw a glowing Gem/Crystal core instead of the block (meaning it's already mined)
+      const coreColor = isGreat ? "var(--mc-diamond)" : "var(--mc-red)";
+      
+      // Draw glowing background halo
+      ctx.fillStyle = isGreat ? "rgba(34, 211, 238, 0.15)" : "rgba(239, 68, 68, 0.15)";
+      ctx.beginPath();
+      ctx.arc(bx + 24, by + 24, 30, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Draw gemstone diamond shape
+      ctx.fillStyle = coreColor;
+      ctx.beginPath();
+      ctx.moveTo(bx + 24, by + 8);
+      ctx.lineTo(bx + 38, by + 24);
+      ctx.lineTo(bx + 24, by + 40);
+      ctx.lineTo(bx + 10, by + 24);
+      ctx.closePath();
+      ctx.fill();
+      
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      
+      // Sparkling sparkles indicators
+      ctx.fillStyle = "#fff";
+      if (Math.random() < 0.1) {
+        ctx.fillRect(bx + 12 + Math.random() * 24, by + 12 + Math.random() * 24, 3, 3);
+      }
+    } else {
+      // Draw full textured Ore block with shake offset
+      const blockColor = isGreat ? "#0b4e5b" : "#4c0505"; // dark sapphire vs dark ruby rocks
+      const gemColor = isGreat ? "var(--mc-diamond)" : "var(--mc-red)";
+      
+      ctx.fillStyle = blockColor;
+      ctx.fillRect(bx + shakeOffset, by, 48, 48);
+      ctx.strokeStyle = "#000000";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(bx + shakeOffset, by, 48, 48);
+      
+      // Draw embedded glowing gem nodes inside the block
+      ctx.fillStyle = gemColor;
+      ctx.fillRect(bx + 10 + shakeOffset, by + 10, 8, 8);
+      ctx.fillRect(bx + 28 + shakeOffset, by + 24, 10, 10);
+      ctx.fillRect(bx + 14 + shakeOffset, by + 30, 6, 6);
+      
+      // Draw block cracks based on health/damage ratio
+      const ratio = blockData.hp / blockData.maxHp;
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.75)";
+      ctx.lineWidth = 3.5;
+      
+      if (ratio <= 0.8 && ratio > 0.5) {
+        // Light cracking
+        ctx.beginPath();
+        ctx.moveTo(bx + 4 + shakeOffset, by + 4);
+        ctx.lineTo(bx + 20 + shakeOffset, by + 20);
+        ctx.stroke();
+      } else if (ratio <= 0.5 && ratio > 0.25) {
+        // Medium cracking
+        ctx.beginPath();
+        ctx.moveTo(bx + 4 + shakeOffset, by + 4);
+        ctx.lineTo(bx + 20 + shakeOffset, by + 20);
+        ctx.moveTo(bx + 44 + shakeOffset, by + 6);
+        ctx.lineTo(bx + 28 + shakeOffset, by + 28);
+        ctx.stroke();
+      } else if (ratio <= 0.25) {
+        // Heavy cracking
+        ctx.beginPath();
+        ctx.moveTo(bx + 4 + shakeOffset, by + 4);
+        ctx.lineTo(bx + 24 + shakeOffset, by + 24);
+        ctx.lineTo(bx + 8 + shakeOffset, by + 44);
+        ctx.moveTo(bx + 44 + shakeOffset, by + 4);
+        ctx.lineTo(bx + 24 + shakeOffset, by + 24);
+        ctx.stroke();
+      }
+      
+      // Floating Mini Ore Health Bar
+      ctx.fillStyle = "#000";
+      ctx.fillRect(bx + 4 + shakeOffset, by - 8, 40, 5);
+      const hpWidth = Math.floor(40 * ratio);
+      ctx.fillStyle = isGreat ? "var(--mc-diamond)" : "var(--mc-red)";
+      ctx.fillRect(bx + 4 + shakeOffset, by - 8, hpWidth, 5);
+    }
     
-    ctx.fillStyle = topColor;
-    ctx.fillRect(bx + 4, by + 4, 40, 10);
-    
+    // Label tag
     const personName = p.title.split('-')[0].trim();
-    ctx.fillStyle = "rgba(0,0,0,0.8)";
-    ctx.fillRect(bx - 20, by - 40, 88, 26);
-    ctx.strokeStyle = isGreat ? "var(--mc-diamond)" : "var(--mc-red)";
+    ctx.fillStyle = "rgba(0,0,0,0.85)";
+    ctx.fillRect(bx - 20 + shakeOffset, by - 36, 88, 24);
+    ctx.strokeStyle = isMined ? "#55ff55" : (isGreat ? "var(--mc-diamond)" : "var(--mc-red)");
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(bx - 20, by - 40, 88, 26);
+    ctx.strokeRect(bx - 20 + shakeOffset, by - 36, 88, 24);
     
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 8px var(--font-retro)";
     ctx.textAlign = "center";
-    ctx.fillText(personName, bx + 24, by - 29);
+    ctx.fillText(personName, bx + 24 + shakeOffset, by - 26);
     
-    ctx.fillStyle = "#aaaaaa";
+    ctx.fillStyle = isMined ? "#55ff55" : "#aaaaaa";
     ctx.font = "6px var(--font-retro)";
-    ctx.fillText(`♥${p.likesCount} 👁${p.viewsCount}`, bx + 24, by - 18);
+    const oreStatusText = isMined ? "완료(F)" : `채굴(F) H:${blockData.hp}`;
+    ctx.fillText(oreStatusText, bx + 24 + shakeOffset, by - 16);
   });
   
-  // Draw Player
+  // 7. Draw Player
   const px = player.x;
   const py = player.y;
   
+  // Body
   ctx.fillStyle = "#1e88e5";
   ctx.fillRect(px, py + 16, player.width, 28);
   ctx.strokeStyle = "#000";
   ctx.lineWidth = 3;
   ctx.strokeRect(px, py + 16, player.width, 28);
   
+  // Legs (walk animation)
   ctx.fillStyle = "#0d47a1";
   if (player.isMoving && player.grounded) {
     if (player.animFrame % 2 === 0) {
@@ -911,10 +1365,12 @@ function drawGame() {
     ctx.strokeRect(px + 14, py + 38, 8, 8);
   }
   
+  // Head
   ctx.fillStyle = "#ffcc80";
   ctx.fillRect(px + 2, py, 20, 18);
   ctx.strokeRect(px + 2, py, 20, 18);
   
+  // Hair & Eyes
   ctx.fillStyle = "#5d4037";
   ctx.fillRect(px + 2, py, 20, 6);
   ctx.fillStyle = "#000000";
@@ -925,6 +1381,77 @@ function drawGame() {
     ctx.fillRect(px + 4, py + 8, 3, 3);
     ctx.fillRect(px + 8, py + 8, 3, 3);
   }
+  
+  // 8. Draw Equipt Pickaxe Swing Animation
+  const equipped = getEquippedPickaxe();
+  if (player.isSwinging) {
+    ctx.save();
+    // Anchor rotation to player's center body
+    const armX = px + (player.direction === 1 ? player.width : 0);
+    const armY = py + 22;
+    ctx.translate(armX, armY);
+    
+    // Rotate relative to player direction
+    const finalAngle = player.direction === 1 ? player.swingAngle : -player.swingAngle - Math.PI;
+    ctx.rotate(finalAngle);
+    
+    // Draw pickaxe shaft
+    ctx.strokeStyle = "#854d0e"; // Wood shaft
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, -32);
+    ctx.stroke();
+    
+    // Draw pickaxe head curves
+    ctx.fillStyle = equipped.color;
+    ctx.beginPath();
+    ctx.moveTo(-16, -32);
+    ctx.lineTo(16, -32);
+    ctx.lineTo(12, -26);
+    ctx.lineTo(-12, -26);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    
+    ctx.restore();
+  }
+  
+  // 9. Draw Particle FX
+  juice.particles.forEach(p => {
+    ctx.fillStyle = p.color;
+    if (p.isGem) {
+      // Draw gemstone diamonds shape
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y - p.size);
+      ctx.lineTo(p.x + p.size, p.y);
+      ctx.lineTo(p.x, p.y + p.size);
+      ctx.lineTo(p.x - p.size, p.y);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // Standard stone chips blocks
+      ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+    }
+  });
+  
+  // 10. Draw Bouncing Floating text
+  juice.floatingTexts.forEach(t => {
+    ctx.fillStyle = t.color;
+    ctx.font = `bold ${t.size}px var(--font-retro)`;
+    ctx.textAlign = "center";
+    ctx.fillText(t.text, t.x, t.y);
+    
+    // Outline text
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 2;
+    ctx.strokeText(t.text, t.x, t.y);
+  });
   
   ctx.restore();
 }

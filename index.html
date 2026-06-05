@@ -41,7 +41,7 @@
       
       <!-- HUD (Heads Up Display) -->
       <div id="hud-overlay">
-        <!-- HUD Left: Profile Card & XP Bar -->
+        <!-- HUD Left: Profile Card, XP Bar, and Gold Coins Card -->
         <div class="hud-left">
           <div class="player-card" id="hud-profile-btn" style="cursor: pointer;">
             <div class="avatar-pixel" id="hud-avatar">S</div>
@@ -54,6 +54,10 @@
             <div class="xp-bar-fill" id="hud-xp-fill"></div>
             <div class="xp-text" id="hud-xp-text">0 / 100 XP</div>
           </div>
+          <div class="gold-card" id="hud-gold-card">
+            <span class="gold-icon">🪙</span>
+            <span id="hud-gold-text">100 G</span>
+          </div>
         </div>
 
         <!-- HUD Right: Buttons and Info -->
@@ -63,6 +67,7 @@
             <button id="tp-poor-btn" class="pixel-btn town-btn pixel-btn-danger">소외된 마을</button>
           </div>
           <div style="display:flex; gap:8px;">
+            <button id="shop-trigger-btn" class="pixel-btn town-btn" style="background:#8a572a; color:#fff; box-shadow: inset -3px -3px 0px 0px #4d3319, inset 3px 3px 0px 0px #b88655; padding: 8px 12px; font-size:10px;">⛏ 상점</button>
             <button id="settings-trigger-btn" class="pixel-btn town-btn" style="background:#555; color:#fff; box-shadow: inset -3px -3px 0px 0px #222, inset 3px 3px 0px 0px #888; padding: 8px 12px; font-size:10px;">⚙ 설정</button>
             <button id="add-block-trigger-btn" class="pixel-btn pixel-btn-primary" style="font-size: 10px; padding: 8px 12px;">블록 만들기</button>
           </div>
@@ -334,6 +339,29 @@
         </div>
         
         <button id="api-url-save-btn" class="pixel-btn pixel-btn-primary" style="width: 100%">설정 저장 및 연결하기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. Pickaxe Upgrade Shop Modal -->
+  <div id="modal-shop" class="modal-overlay">
+    <div class="pixel-modal" style="max-width: 550px;">
+      <div class="modal-header">
+        <h2 class="modal-title">⛏ 광산 곡괭이 강화 상점</h2>
+        <button class="pixel-btn close-btn" onclick="closeModal('modal-shop')">X</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px; color:#ccc; margin-bottom:8px;">
+          더 비싸고 강력한 곡괭이를 구매하여 광물 채굴 속도를 대폭 단축시키세요! (보유 Gold가 차감됩니다.)
+        </p>
+        
+        <div style="display:flex; justify-content:center; align-items:center; background:#1e1e1f; border:2px solid #000; padding:10px; font-family:var(--font-retro); color:var(--mc-gold); margin-bottom:12px;">
+          🪙 현재 보유 골드: <span id="shop-gold-balance" style="margin-left:8px;">100</span> G
+        </div>
+        
+        <div class="shop-grid" id="shop-items-container">
+          <!-- Shop items dynamically populated by JS -->
+        </div>
       </div>
     </div>
   </div>
