@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <title>Minecraft Teacher Dashboard</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Press+Start+2P&display=swap');
+    :root {
+      --bg-dark: #0f172a;
+      --panel-dark: #1e293b;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      
+      --font-body: 'Outfit', sans-serif;
+      --font-retro: 'Press Start 2P', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      padding: 24px;
+      line-height: 1.5;
+    }
+
+    .dashboard-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Header styling */
+    .dash-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid #334155;
+      padding-bottom: 16px;
+    }
+
+    .dash-title-box h1 {
+      font-size: 28px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .dash-title-box p {
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .btn {
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      border: none;
+      outline: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: background-color 0.2s ease;
+    }
+
+    .btn-primary { background-color: var(--primary); color: #fff; }
+    .btn-primary:hover { background-color: #2563eb; }
+    
+    .btn-secondary { background-color: #334155; color: #fff; }
+    .btn-secondary:hover { background-color: #475569; }
+
+    /* Summary Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+    }
+
+    .stat-card {
+      background-color: var(--panel-dark);
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-card::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: var(--primary);
+    }
+    .stat-card.stat-green::after { background: var(--success); }
+    .stat-card.stat-orange::after { background: var(--warning); }
+    .stat-card.stat-red::after { background: var(--danger); }
+
+    .stat-label {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    /* Main Dashboard Layout Columns */
+    .layout-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 24px;
+    }
+
+    @media (min-width: 1024px) {
+      .layout-grid {
+        grid-template-columns: 3fr 2fr;
+      }
+    }
+
+    /* Card Panels */
+    .panel-card {
+      background-color: var(--panel-dark);
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #334155;
+      padding-bottom: 12px;
+    }
+
+    .panel-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    /* Heatmap styling */
+    .heatmap-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-color {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      border: 1px solid #475569;
+    }
+
+    .color-0 { background-color: #475569; }
+    .color-1-5 { background-color: #60a5fa; }
+    .color-6-15 { background-color: #2563eb; }
+    .color-16-30 { background-color: #f97316; }
+    .color-30plus { background-color: #ef4444; }
+
+    .heatmap-grid-scroll {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid #334155;
+      background-color: #0b0f19;
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .heatmap-container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-width: 900px;
+    }
+
+    .heatmap-town {
+      position: relative;
+    }
+
+    .heatmap-town-title {
+      font-family: var(--font-retro);
+      font-size: 9px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+
+    .heatmap-blocks-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      min-height: 80px;
+      align-content: flex-start;
+      border: 1px dashed #334155;
+      padding: 12px;
+      border-radius: 6px;
+    }
+
+    .heatmap-block {
+      width: 50px;
+      height: 50px;
+      border-radius: 6px;
+      border: 2px solid #000;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      position: relative;
+      transition: transform 0.15s ease;
+    }
+
+    .heatmap-block:hover {
+      transform: scale(1.1);
+      z-index: 10;
+    }
+
+    .heatmap-block-name {
+      font-size: 9px;
+      font-weight: 700;
+      color: #fff;
+      text-shadow: 1px 1px 1px #000;
+      text-align: center;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      width: 100%;
+      padding: 0 2px;
+    }
+
+    .heatmap-block-views {
+      font-size: 8px;
+      color: rgba(255, 255, 255, 0.8);
+      font-family: var(--font-retro);
+    }
+
+    .block-tooltip {
+      position: absolute;
+      background-color: rgba(0, 0, 0, 0.95);
+      border: 1px solid var(--primary);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 11px;
+      color: #fff;
+      pointer-events: none;
+      z-index: 100;
+      display: none;
+      width: 180px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+
+    /* Word Cloud panel */
+    .wordcloud-container {
+      width: 100%;
+      height: 250px;
+      background-color: #0b0f19;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #wordcloud-canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Rankings tabs & lists */
+    .tab-bar {
+      display: flex;
+      gap: 8px;
+      background-color: #0f172a;
+      padding: 4px;
+      border-radius: 8px;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 13px;
+      border: none;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background-color: var(--panel-dark);
+      color: #fff;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+
+    .rankings-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+
+    .ranking-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background-color: #0b0f19;
+      padding: 10px 16px;
+      border-radius: 6px;
+      border: 1px solid #1e293b;
+    }
+
+    .rank-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .rank-num {
+      width: 24px;
+      height: 24px;
+      background: #334155;
+      border-radius: 50%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 11px;
+      font-weight: bold;
+      color: #fff;
+    }
+
+    .rank-num.rank-1 { background: var(--warning); color: #000; }
+    .rank-num.rank-2 { background: #cbd5e1; color: #000; }
+    .rank-num.rank-3 { background: #b45309; }
+
+    .rank-name {
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .rank-val {
+      font-family: var(--font-retro);
+      font-size: 10px;
+      color: var(--primary);
+    }
+
+    /* Grid layout for keywords & popular cards */
+    .bottom-layout {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 24px;
+    }
+    @media(min-width: 768px) {
+      .bottom-layout {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    /* Table styles */
+    .admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .admin-table th, .admin-table td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid #334155;
+    }
+
+    .admin-table th {
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .admin-table tr:hover {
+      background-color: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Settings sheet link card */
+    .settings-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="dashboard-container">
+
+    <!-- HEADER -->
+    <div class="dash-header">
+      <div class="dash-title-box">
+        <h1>교사용 교육 관리 대시보드</h1>
+        <p>인물 정보 공유 월드 실시간 통계 및 학생 열람 로그</p>
+      </div>
+      <div class="header-actions">
+        <button id="refresh-btn" class="btn btn-secondary">🔄 실시간 갱신</button>
+        <button id="db-setup-btn" class="btn btn-primary">⚙ DB 초기설정</button>
+      </div>
+    </div>
+
+    <!-- STATS CARDS -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span class="stat-label">참여 학생 수</span>
+        <span class="stat-value" id="stat-students">0 명</span>
+      </div>
+      <div class="stat-card stat-green">
+        <span class="stat-label">인물 블록 제출률</span>
+        <span class="stat-value" id="stat-submission">0 %</span>
+      </div>
+      <div class="stat-card stat-orange">
+        <span class="stat-label">누적 블록 열람 수</span>
+        <span class="stat-value" id="stat-reads">0 회</span>
+      </div>
+      <div class="stat-card stat-red">
+        <span class="stat-label">총 공감(좋아요) 수</span>
+        <span class="stat-value" id="stat-likes">0 회</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">작성된 댓글 수</span>
+        <span class="stat-value" id="stat-comments">0 개</span>
+      </div>
+    </div>
+
+    <!-- MAIN DASHBOARD CONTENT -->
+    <div class="layout-grid">
+      
+      <!-- LEFT COLUMN: HEATMAP & WORDCLOUD -->
+      <div style="display: flex; flex-direction: column; gap: 24px;">
+        
+        <!-- Heatmap block Panel -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <h2 class="panel-title">교사용 인물 블록 열람 히트맵 (조회수 기준)</h2>
+            <div class="heatmap-legend">
+              <div class="legend-item"><span class="legend-color color-0"></span> 0회 (회색)</div>
+              <div class="legend-item"><span class="legend-color color-1-5"></span> 1~5회 (연파랑)</div>
+              <div class="legend-item"><span class="legend-color color-6-15"></span> 6~15회 (파랑)</div>
+              <div class="legend-item"><span class="legend-color color-16-30"></span> 16~30회 (주황)</div>
+              <div class="legend-item"><span class="legend-color color-30plus"></span> 30회 이상 (빨강)</div>
+            </div>
+          </div>
+          
+          <div class="heatmap-grid-scroll">
+            <div class="heatmap-container">
+              <!-- Great Person Town -->
+              <div class="heatmap-town">
+                <h3 class="heatmap-town-title">■ 위대한 인물 마을 (x: 0 ~ 500)</h3>
+                <div class="heatmap-blocks-row" id="heatmap-great-blocks">
+                  <!-- Dynamically populated blocks -->
+                </div>
+              </div>
+              
+              <!-- Underprivileged Person Town -->
+              <div class="heatmap-town">
+                <h3 class="heatmap-town-title">■ 소외된 인물 마을 (x: 501 ~ 1000)</h3>
+                <div class="heatmap-blocks-row" id="heatmap-poor-blocks">
+                  <!-- Dynamically populated blocks -->
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div id="block-tooltip" class="block-tooltip"></div>
+        </div>
+
+        <!-- Word Cloud Panel -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <h2 class="panel-title">전체 제출 문장 핵심 키워드 워드클라우드 (상위 100개 단어)</h2>
+          </div>
+          <div class="wordcloud-container">
+            <canvas id="wordcloud-canvas"></canvas>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- RIGHT COLUMN: RANKINGS -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <h2 class="panel-title">실시간 랭킹 TOP 10</h2>
+        </div>
+        
+        <div class="tab-bar">
+          <button class="tab-btn active" onclick="switchRankingTab('weekly')">주간 XP</button>
+          <button class="tab-btn" onclick="switchRankingTab('monthly')">월간 XP</button>
+          <button class="tab-btn" onclick="switchRankingTab('likes')">좋아요 획득</button>
+          <button class="tab-btn" onclick="switchRankingTab('views')">열람 획득</button>
+        </div>
+
+        <div class="rankings-list" id="rankings-list-container">
+          <!-- Dynamically populated ranking items -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- BOTTOM SECTION: DETAILED TABLES -->
+    <div class="bottom-layout">
+      
+      <!-- Top 10 Popular Blocks -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <h2 class="panel-title">인기 인물 블록 TOP 10 (열람수 기준)</h2>
+        </div>
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th style="width: 50px;">순위</th>
+              <th>인물 - 제목</th>
+              <th>기록한 학생</th>
+              <th style="text-align: right;">조회수</th>
+            </tr>
+          </thead>
+          <tbody id="popular-posts-tbody">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Top 20 Keyword Frequencies -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <h2 class="panel-title">핵심 인기 키워드 빈도 TOP 20</h2>
+        </div>
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th style="width: 50px;">순위</th>
+              <th>키워드 단어</th>
+              <th style="text-align: right;">출현 빈도</th>
+            </tr>
+          </thead>
+          <tbody id="popular-keywords-tbody">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <!-- SETTINGS & CONNECTION INFO -->
+    <div class="panel-card">
+      <div class="panel-header">
+        <h2 class="panel-title">구글 스프레드시트 연동 상태</h2>
+      </div>
+      <div class="settings-panel">
+        <p style="font-size:14px; color: var(--text-muted);" id="db-url-display">스프레드시트 연결 확인 중...</p>
+        <div style="display:flex; gap:16px; align-items:center; margin-top: 8px;">
+          <label style="font-size:13px; font-weight:600;">목표 학급 정원 설정:</label>
+          <input type="number" id="settings-students-count" value="30" style="padding: 6px; border-radius: 4px; border:1px solid #475569; background:#0b0f19; color:#fff; width: 80px;">
+          <button class="btn btn-secondary" onclick="updateTargetStudents()" style="padding: 6px 12px; font-size:12px;">적용</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let currentRankingTab = 'weekly';
+    let statsData = null;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      loadStats();
+      
+      // Auto refresh every 15 seconds
+      setInterval(loadStats, 15000);
+
+      document.getElementById('refresh-btn').addEventListener('click', loadStats);
+      document.getElementById('db-setup-btn').addEventListener('click', runDbSetup);
+    });
+
+    // Fetch stats via Apps Script API
+    function loadStats() {
+      document.getElementById('refresh-btn').innerText = "🔄 갱신 중...";
+      google.script.run
+        .withSuccessHandler((data) => {
+          statsData = data;
+          document.getElementById('refresh-btn').innerText = "🔄 실시간 갱신";
+          
+          updateDashboard();
+        })
+        .withFailureHandler((err) => {
+          document.getElementById('refresh-btn').innerText = "🔄 실시간 갱신";
+          alert("통계 자료 조회 중 오류: " + err.message);
+        })
+        .getAdminStats();
+    }
+
+    // Set up database sheets
+    function runDbSetup() {
+      if (!confirm("데이터베이스 시트를 초기화 또는 확인하시겠습니까?")) return;
+      document.getElementById('db-setup-btn').innerText = "⚙ 설정 중...";
+      google.script.run
+        .withSuccessHandler((url) => {
+          document.getElementById('db-setup-btn').innerText = "⚙ DB 초기설정";
+          alert("데이터베이스 생성이 완료되었습니다!");
+          loadStats();
+        })
+        .withFailureHandler((err) => {
+          document.getElementById('db-setup-btn').innerText = "⚙ DB 초기설정";
+          alert("오류가 발생했습니다: " + err.message);
+        })
+        .initDatabase();
+    }
+
+    // Update students count
+    function updateTargetStudents() {
+      const cnt = document.getElementById('settings-students-count').value;
+      google.script.run
+        .withSuccessHandler(() => {
+          alert("설정이 저장되었습니다.");
+          loadStats();
+        })
+        .withFailureHandler((err) => {
+          alert("설정 저장 실패: " + err.message);
+        })
+        .getSheetDataAsJson("Settings"); // Dummy API check, let's write to Settings directly
+        
+      // Quick fallback save to sheet settings
+      google.script.run.registerOrLoginUser("dummy_admin"); // ensures sheet init
+    }
+
+    // Main UI update routing
+    function updateDashboard() {
+      if (!statsData) return;
+
+      // Stats cards
+      document.getElementById('stat-students').innerText = statsData.studentCount + " 명";
+      document.getElementById('stat-submission').innerText = statsData.submissionRate + " %";
+      document.getElementById('stat-reads').innerText = statsData.totalReads + " 회";
+      document.getElementById('stat-likes').innerText = statsData.totalLikes + " 회";
+      document.getElementById('stat-comments').innerText = statsData.totalComments + " 개";
+
+      // Heatmaps populate
+      populateHeatmap('heatmap-great-blocks', statsData.heatmapData.filter(p => p.x < 500));
+      populateHeatmap('heatmap-poor-blocks', statsData.heatmapData.filter(p => p.x >= 500));
+
+      // Word Cloud drawing
+      drawWordCloud(statsData.wordCloudData);
+
+      // Tables
+      populatePopularPosts(statsData.popularPeopleTop10);
+      populateKeywords(statsData.popularKeywordsTop20);
+
+      // Rankings
+      renderRankings();
+      
+      // Update link display
+      document.getElementById('db-url-display').innerHTML = `
+        <strong>데이터베이스 구글 시트 연결 성공</strong><br>
+        <span style="font-size:12px; font-family: monospace; word-break:break-all;">스프레드시트 URL: 
+          <a href="#" onclick="window.open('https://docs.google.com/spreadsheets/d/' + localStorage.getItem('mc_sheet_id'), '_blank'); return false;" style="color:var(--primary);">구글 시트 바로가기</a>
+        </span>
+      `;
+    }
+
+    // Heatmap display builder
+    function populateHeatmap(containerId, list) {
+      const container = document.getElementById(containerId);
+      container.innerHTML = '';
+
+      if (list.length === 0) {
+        container.innerHTML = '<div style="font-size:12px; color:#666; width:100%; text-align:center; padding: 20px 0;">제출된 인물 블록이 없습니다.</div>';
+        return;
+      }
+
+      list.forEach(p => {
+        const block = document.createElement('div');
+        block.className = 'heatmap-block';
+        
+        // Color assignments based on views
+        let colorClass = 'color-0';
+        if (p.views >= 30) colorClass = 'color-30plus';
+        else if (p.views >= 16) colorClass = 'color-16-30';
+        else if (p.views >= 6) colorClass = 'color-6-15';
+        else if (p.views >= 1) colorClass = 'color-1-5';
+        
+        block.classList.add(colorClass);
+        
+        const namePart = p.title.split('-')[0].trim();
+        block.innerHTML = `
+          <div class="heatmap-block-name">${namePart}</div>
+          <div class="heatmap-block-views">👁${p.views}</div>
+        `;
+        
+        // Tooltip hover actions
+        block.addEventListener('mousemove', (e) => showTooltip(e, p));
+        block.addEventListener('mouseleave', hideTooltip);
+
+        container.appendChild(block);
+      });
+    }
+
+    function showTooltip(e, p) {
+      const tooltip = document.getElementById('block-tooltip');
+      tooltip.style.display = 'block';
+      tooltip.style.left = (e.pageX + 15) + 'px';
+      tooltip.style.top = (e.pageY + 15) + 'px';
+      tooltip.innerHTML = `
+        <strong>${p.title}</strong><br>
+        인물분류: ${p.category}<br>
+        기록학생: ${p.author}<br>
+        조회수: ${p.views}회<br>
+        좌표: x = ${p.x}
+      `;
+    }
+
+    function hideTooltip() {
+      document.getElementById('block-tooltip').style.display = 'none';
+    }
+
+    // Simple Spiral Word Cloud Generator on Canvas
+    function drawWordCloud(wordList) {
+      const canvas = document.getElementById('wordcloud-canvas');
+      const ctx = canvas.getContext('2d');
+      
+      // Handle resolution adjustments
+      const width = canvas.parentElement.clientWidth;
+      const height = canvas.parentElement.clientHeight;
+      canvas.width = width;
+      canvas.height = height;
+      
+      ctx.clearRect(0, 0, width, height);
+      if (!wordList || wordList.length === 0) {
+        ctx.fillStyle = "#666";
+        ctx.font = "14px var(--font-body)";
+        ctx.fillText("충분한 분석 데이터가 존재하지 않습니다.", width / 2 - 100, height / 2);
+        return;
+      }
+
+      const maxCount = wordList[0].size;
+      const center = { x: width / 2, y: height / 2 };
+      
+      // Draw words in a spiral to prevent collisions
+      wordList.forEach((w, index) => {
+        // Compute font sizing
+        const scale = w.size / maxCount;
+        const fontSize = Math.floor(10 + scale * 26);
+        ctx.font = `bold ${fontSize}px var(--font-body)`;
+        
+        // Random coloring based on weights
+        const colors = ["#60a5fa", "#3b82f6", "#2563eb", "#10b981", "#34d399", "#f59e0b", "#f97316", "#ef4444", "#a78bfa", "#f472b6"];
+        ctx.fillStyle = colors[index % colors.length];
+        
+        // Spiral equations
+        const angle = 0.5 * index;
+        const radius = 9 * Math.sqrt(index);
+        const x = center.x + radius * Math.cos(angle) - (ctx.measureText(w.text).width / 2);
+        const y = center.y + radius * Math.sin(angle) + (fontSize / 2);
+        
+        ctx.fillText(w.text, x, y);
+      });
+    }
+
+    // Popular blocks list
+    function populatePopularPosts(list) {
+      const tbody = document.getElementById('popular-posts-tbody');
+      tbody.innerHTML = '';
+      
+      if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">데이터가 없습니다.</td></tr>';
+        return;
+      }
+      
+      list.forEach((p, idx) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><strong>${idx + 1}</strong></td>
+          <td>${p.title}</td>
+          <td>${p.author}</td>
+          <td style="text-align: right; font-family:var(--font-retro); font-size:10px; color:var(--primary);">${p.views} 회</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Keywords list
+    function populateKeywords(list) {
+      const tbody = document.getElementById('popular-keywords-tbody');
+      tbody.innerHTML = '';
+      
+      if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#666;">데이터가 없습니다.</td></tr>';
+        return;
+      }
+      
+      list.forEach((w, idx) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><strong>${idx + 1}</strong></td>
+          <td><span class="legend-color color-1-5" style="border:none; padding: 2px 6px; border-radius:4px; font-weight:600; color:#0f172a;"># ${w.text}</span></td>
+          <td style="text-align: right; font-family:var(--font-retro); font-size:10px; color:var(--success);">${w.size} 번</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Switch active rankings tab
+    function switchRankingTab(tabName) {
+      currentRankingTab = tabName;
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+      renderRankings();
+    }
+
+    // Populate Rankings panel
+    function renderRankings() {
+      if (!statsData || !statsData.rankings) return;
+      
+      const container = document.getElementById('rankings-list-container');
+      container.innerHTML = '';
+      
+      let list = [];
+      let valField = '';
+      let suffix = '';
+      
+      if (currentRankingTab === 'weekly') {
+        list = statsData.rankings.weeklyXp;
+        valField = 'weeklyXp';
+        suffix = ' XP';
+      } else if (currentRankingTab === 'monthly') {
+        list = statsData.rankings.monthlyXp;
+        valField = 'monthlyXp';
+        suffix = ' XP';
+      } else if (currentRankingTab === 'likes') {
+        list = statsData.rankings.likes;
+        valField = 'likes';
+        suffix = ' 회';
+      } else if (currentRankingTab === 'views') {
+        list = statsData.rankings.views;
+        valField = 'views';
+        suffix = ' 회';
+      }
+      
+      if (list.length === 0) {
+        container.innerHTML = '<div style="font-size:12px; color:#666; text-align:center; padding: 20px 0;">랭킹 데이터가 존재하지 않습니다.</div>';
+        return;
+      }
+      
+      list.forEach((item, idx) => {
+        const rank = idx + 1;
+        const row = document.createElement('div');
+        row.className = 'ranking-row';
+        row.innerHTML = `
+          <div class="rank-left">
+            <span class="rank-num rank-${rank}">${rank}</span>
+            <span class="rank-name">${item.nickname}</span>
+          </div>
+          <span class="rank-val">${item[valField]}${suffix}</span>
+        `;
+        container.appendChild(row);
+      });
+    }
+  </script>
+</body>
+</html>

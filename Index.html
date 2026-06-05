@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <title>Minecraft Educational World</title>
+  <!-- Load Style.html -->
+  <?= include('Style'); ?>
+</head>
+<body>
+
+  <div id="screen-container">
+
+    <!-- 1. LOADING SCREEN -->
+    <div id="screen-loading" class="screen">
+      <div class="loading-spinner"></div>
+      <div class="loading-text" id="loading-message">마인크래프트 월드 불러오는 중...</div>
+    </div>
+
+    <!-- 2. LOGIN / REGISTER SCREEN -->
+    <div id="screen-login" class="screen panorama-bg hidden">
+      <div class="login-box pixel-box-dark">
+        <h1 class="login-title">MINECRAFT<br>EDU WORLD</h1>
+        <p class="login-subtitle">인물 탐색 마을에 오신 것을 환영합니다!</p>
+        
+        <div class="pixel-input-container">
+          <label class="pixel-label" for="username-input">학생 닉네임 입력</label>
+          <input type="text" id="username-input" class="pixel-input" placeholder="닉네임을 입력하세요..." autocomplete="off">
+        </div>
+        
+        <button id="login-submit-btn" class="pixel-btn pixel-btn-primary" style="width: 100%">월드 입장하기</button>
+      </div>
+    </div>
+
+    <!-- 3. MAIN GAME SCREEN -->
+    <div id="screen-game" class="screen hidden">
+      
+      <!-- HUD (Heads Up Display) -->
+      <div id="hud-overlay">
+        <!-- HUD Left: Profile Card & XP Bar -->
+        <div class="hud-left">
+          <div class="player-card" id="hud-profile-btn" style="cursor: pointer;">
+            <div class="avatar-pixel" id="hud-avatar">S</div>
+            <div class="player-info">
+              <span class="player-name" id="hud-nickname">Student</span>
+              <div class="player-level" id="hud-level">Lv. 1</div>
+            </div>
+          </div>
+          <div class="xp-bar-container">
+            <div class="xp-bar-fill" id="hud-xp-fill"></div>
+            <div class="xp-text" id="hud-xp-text">0 / 100 XP</div>
+          </div>
+        </div>
+
+        <!-- HUD Right: Buttons and Info -->
+        <div class="hud-right">
+          <div class="town-shortcuts">
+            <button id="tp-great-btn" class="pixel-btn town-btn pixel-btn-primary">위대한 마을</button>
+            <button id="tp-poor-btn" class="pixel-btn town-btn pixel-btn-danger">소외된 마을</button>
+          </div>
+          <button id="add-block-trigger-btn" class="pixel-btn pixel-btn-primary" style="font-size: 10px;">블록 만들기</button>
+          
+          <div id="recom-banner-trigger" class="pixel-box" style="padding: 6px 12px; cursor: pointer; background: rgba(0,0,0,0.8); border-color: var(--mc-gold); box-shadow: none; color: var(--mc-gold); font-family: var(--font-retro); font-size: 8px;">
+            ★ 오늘의 추천 인물
+          </div>
+        </div>
+      </div>
+
+      <!-- Game Canvas Wrapper -->
+      <div id="canvas-wrapper">
+        <canvas id="game-canvas"></canvas>
+      </div>
+
+      <!-- Mobile D-Pad and Action Controllers -->
+      <div id="mobile-controller">
+        <div class="d-pad">
+          <button id="btn-left" class="ctrl-btn">◀</button>
+          <button id="btn-right" class="ctrl-btn">▶</button>
+        </div>
+        <div class="action-pad">
+          <button id="btn-action" class="ctrl-btn">F</button>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- ==================== POPUP MODALS ==================== -->
+
+  <!-- 1. Add Post Modal -->
+  <div id="modal-add-post" class="modal-overlay">
+    <div class="pixel-modal">
+      <div class="modal-header">
+        <h2 class="modal-title">새로운 인물 블록 생성</h2>
+        <button class="pixel-btn close-btn" onclick="closeModal('modal-add-post')">X</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="pixel-input-container">
+            <label class="pixel-label">인물 분류 (카테고리)</label>
+            <select id="form-category" class="pixel-select">
+              <optgroup label="위대한 인물 마을 (x: 0~500)">
+                <option value="Hero">영웅</option>
+                <option value="Volunteer">봉사자</option>
+                <option value="Independence fighter">독립운동가</option>
+                <option value="Educator">교육자</option>
+                <option value="Community contributor">지역사회 공헌 인물</option>
+              </optgroup>
+              <optgroup label="소외된 인물 마을 (x: 501~1000)">
+                <option value="Migrant worker">이주노동자</option>
+                <option value="Elderly living alone">독거노인</option>
+                <option value="Disabled">장애인</option>
+                <option value="School dropout youth">학교 밖 청소년</option>
+                <option value="Socially vulnerable">사회적 약자</option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="pixel-input-container">
+            <label class="pixel-label">인물 이름</label>
+            <input type="text" id="form-name" class="pixel-input" placeholder="이름을 입력하세요">
+          </div>
+          <div class="pixel-input-container form-full">
+            <label class="pixel-label">글 제목</label>
+            <input type="text" id="form-title" class="pixel-input" placeholder="블록 제목을 입력하세요">
+          </div>
+          <div class="pixel-input-container form-full">
+            <label class="pixel-label">대표 이미지 URL (선택)</label>
+            <input type="text" id="form-image" class="pixel-input" placeholder="https://example.com/image.jpg">
+          </div>
+          <div class="pixel-input-container form-full">
+            <label class="pixel-label">한줄 요약 (WordCloud 대상)</label>
+            <input type="text" id="form-summary" class="pixel-input" placeholder="인물을 소개하는 짧은 한줄을 써주세요">
+          </div>
+          <div class="pixel-input-container form-full">
+            <label class="pixel-label">상세 소개 문단 (WordCloud 대상)</label>
+            <textarea id="form-paragraph" class="pixel-input" rows="4" placeholder="상세한 업적이나 삶의 이야기를 작성해 주세요" style="font-family: var(--font-body); font-weight: normal; resize: none;"></textarea>
+          </div>
+        </div>
+        
+        <div style="text-align: right; margin-top: 12px;">
+          <button id="form-submit-btn" class="pixel-btn pixel-btn-primary">블록 설치하기 (+5 XP)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Block Detail Modal -->
+  <div id="modal-block-detail" class="modal-overlay">
+    <div class="pixel-modal">
+      <div class="modal-header">
+        <h2 class="modal-title" id="detail-title">세종대왕 - 한글 창제</h2>
+        <button class="pixel-btn close-btn" onclick="closeModal('modal-block-detail')">X</button>
+      </div>
+      <div class="modal-body">
+        
+        <div class="post-meta">
+          <span class="post-meta-item">인물: <strong id="detail-name">이름</strong></span>
+          <span class="post-meta-item">마을 분류: <strong id="detail-category">분류</strong></span>
+          <span class="post-meta-item">기록자: <strong id="detail-author">작성자</strong></span>
+        </div>
+
+        <div class="post-image-container">
+          <img src="" id="detail-image" class="post-image" alt="대표 이미지">
+        </div>
+
+        <div class="post-summary-box" id="detail-summary">
+          인물을 나타내는 한줄 요약입니다.
+        </div>
+
+        <div class="post-paragraph-box" id="detail-paragraph">
+          인물의 상세 문단이 이곳에 렌더링됩니다.
+        </div>
+
+        <div style="display: flex; gap: 16px; align-items: center;">
+          <button id="detail-like-btn" class="pixel-btn pixel-btn-primary" style="display: flex; align-items: center; gap: 8px;">
+            ♥ 좋아요 <span id="detail-like-count">0</span>
+          </button>
+          <span style="font-size: 13px; color: #888;">블록 조회수: <strong id="detail-view-count" style="color: #fff;">0</strong>회</span>
+        </div>
+
+        <!-- Comments Area -->
+        <div class="comments-section">
+          <h3 class="comments-header-title">댓글 목록 (<span id="detail-comment-count">0</span>)</h3>
+          <div class="comments-list" id="detail-comments-list">
+            <!-- Dynamically populated comments -->
+          </div>
+          <div class="comment-input-box">
+            <input type="text" id="detail-comment-input" class="comment-input" placeholder="댓글을 입력하세요... (+5 XP)">
+            <button id="detail-comment-submit-btn" class="pixel-btn pixel-btn-primary" style="font-size: 10px; padding: 10px 14px;">등록</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Profile Modal -->
+  <div id="modal-profile" class="modal-overlay">
+    <div class="pixel-modal" style="max-width: 450px;">
+      <div class="modal-header">
+        <h2 class="modal-title">학생 모험 정보</h2>
+        <button class="pixel-btn close-btn" onclick="closeModal('modal-profile')">X</button>
+      </div>
+      <div class="modal-body profile-panel">
+        
+        <div class="profile-stats">
+          <div class="profile-stat-box">
+            <div class="stat-label">현재 레벨</div>
+            <div class="stat-val" id="profile-level" style="color: var(--mc-xp-bar);">Lv. 1</div>
+          </div>
+          <div class="profile-stat-box">
+            <div class="stat-label">보유 경험치</div>
+            <div class="stat-val" id="profile-xp">0 XP</div>
+          </div>
+        </div>
+
+        <!-- Badges box -->
+        <div class="badge-grid-box">
+          <h3 class="badge-grid-title">획득한 업적 배지</h3>
+          <div class="badges-container" id="profile-badges-container">
+            <!-- Dynamically populated badges -->
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. NPC Dialog Modal -->
+  <div id="modal-npc" class="modal-overlay">
+    <div class="pixel-modal npc-dialog-box">
+      <div class="modal-header">
+        <h2 class="modal-title">주민과의 대화</h2>
+        <button class="pixel-btn close-btn" onclick="closeModal('modal-npc')">X</button>
+      </div>
+      <div class="modal-body">
+        
+        <div class="npc-avatar-container">
+          <div class="npc-pixel-icon" id="npc-avatar">👴</div>
+          <div>
+            <div class="npc-title-name" id="npc-name">기록가 할아버지</div>
+            <div style="font-size:11px; color:#aaa;">마을 수호자 NPC</div>
+          </div>
+        </div>
+
+        <div class="npc-dialog-text" id="npc-dialogue">
+          "반갑네, 모험가여! 이 마을에 온 것을 환영하네."
+        </div>
+
+        <div class="quest-status-card">
+          <div class="quest-title-text" id="npc-quest-title">퀘스트: 독서 입문자</div>
+          <div class="quest-desc-text" id="npc-quest-desc">친구들의 인물 블록 3개를 찾아서 읽어보세요.</div>
+          
+          <div class="quest-progress-outer">
+            <div class="quest-progress-inner" id="npc-quest-progress-bar"></div>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:12px; color:#aaa;">진행률: <strong id="npc-quest-progress-text" style="color:#fff;">0 / 3</strong></span>
+            <span id="npc-quest-status-tag" class="pixel-box" style="padding:2px 8px; font-family:var(--font-retro); font-size:7px; background:#444; color:#fff; border-width:2px; box-shadow:none;">진행중</span>
+          </div>
+        </div>
+
+        <div class="quest-reward-info">
+          <span>보상:</span>
+          <span style="color:var(--mc-xp-bar); font-family:var(--font-retro); font-size:9px;" id="npc-quest-reward-xp">+50 XP</span>
+          <span style="color:var(--mc-gold); font-family:var(--font-retro); font-size:9px;" id="npc-quest-reward-badge">🏆 독서 입문자 배지</span>
+        </div>
+
+        <div style="text-align: right; margin-top: 12px;">
+          <button id="npc-close-btn" class="pixel-btn" onclick="closeModal('modal-npc')">대화 종료</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. Today's Recommended Person Modal -->
+  <div id="modal-recommendation" class="modal-overlay">
+    <div class="pixel-modal" style="max-width: 500px; border-color: var(--mc-gold);">
+      <div class="recommend-banner">★ 오늘의 추천 인물 ★</div>
+      <div class="modal-header" style="border-bottom:none; padding-bottom:0;">
+        <h2 class="modal-title" id="recom-title" style="font-size: 16px;">인물 카드</h2>
+        <button class="pixel-btn close-btn" onclick="closeModal('modal-recommendation')">X</button>
+      </div>
+      <div class="modal-body">
+        
+        <div class="post-meta">
+          <span class="post-meta-item">인물: <strong id="recom-name">이름</strong></span>
+          <span class="post-meta-item">기록자: <strong id="recom-author">작성자</strong></span>
+        </div>
+
+        <div class="post-image-container" style="max-height: 180px;">
+          <img src="" id="recom-image" class="post-image" alt="대표 이미지">
+        </div>
+
+        <div class="post-summary-box" id="recom-summary" style="font-size:14px;">
+          오늘의 요약 내용
+        </div>
+        
+        <p style="font-size: 12px; color: #aaa; text-align: center; margin-top: 8px;">
+          (월드 맵에서 직접 찾아 읽고, 좋아요와 댓글을 달아주세요!)
+        </p>
+
+        <div style="text-align: center; margin-top: 12px;">
+          <button class="pixel-btn pixel-btn-primary" onclick="closeModal('modal-recommendation')" style="width:100%">월드 탐험 시작하기</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load Script.html -->
+  <?= include('Script'); ?>
+</body>
+</html>
