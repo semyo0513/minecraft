@@ -22,10 +22,114 @@ const state = {
 
 // Canvas Engine Configuration
 let canvas, ctx;
-const TILE_SIZE = 32; // pixel size of one grid block
-const WORLD_UNITS = 1000; // Total horizontal grid tiles
-const WORLD_WIDTH = WORLD_UNITS * TILE_SIZE; // 32,000 pixels
-let GROUND_Y = 0; // Calculated on canvas resize
+const TILE_SIZE = 48; // Increased scale for voxel tiles
+const MAP_SIZE = 60; // 60x60 grid tiles
+const WORLD_WIDTH = MAP_SIZE * TILE_SIZE; // 2880 pixels
+const WORLD_HEIGHT = MAP_SIZE * TILE_SIZE; // 2880 pixels
+let GROUND_Y = 0; // Calculated on canvas resize for legacy fallback
+
+// 2D Map Grid Setup (0: walkable floor, 1: solid stone wall)
+const mapGrid = [];
+function initMapGrid() {
+  for (let r = 0; r < MAP_SIZE; r++) {
+    mapGrid[r] = [];
+    for (let c = 0; c < MAP_SIZE; c++) {
+      // Outer border walls
+      if (r === 0 || r === MAP_SIZE - 1 || c === 0 || c === MAP_SIZE - 1) {
+        mapGrid[r][c] = 1;
+      }
+      // Vertical divider wall (Great Mine vs Socially Vulnerable Mine)
+      else if (c === 30 && (r < 20 || r > 40)) {
+        mapGrid[r][c] = 1;
+      }
+      // Natural scattered pillars
+      else if ((r % 12 === 0 && c % 12 === 0) || (r === 15 && c === 15) || (r === 45 && c === 45)) {
+        mapGrid[r][c] = 1;
+      }
+      else {
+        mapGrid[r][c] = 0;
+      }
+    }
+  }
+}
+initMapGrid();
+
+// Seed-based stable coordinate mapper to distribute database items into 2D Grid
+function getEntityWorldCoords(item, type) {
+  if (item._worldX !== undefined && item._worldY !== undefined) {
+    return { x: item._worldX, y: item._worldY };
+  }
+  
+  let seed = 0;
+  if (type === 'post') {
+    const id = item.postId || "";
+    for (let i = 0; i < id.length; i++) seed += id.charCodeAt(i);
+  } else if (type === 'bonus_ore') {
+    const id = item.oreId || "";
+    for (let i = 0; i < id.length; i++) seed += id.charCodeAt(i);
+  }
+  
+  function pseudoRandom() {
+    let x = Math.sin(seed++) * 10000;
+    return x - Math.floor(x);
+  }
+  
+  let tileX, tileY;
+  const isLeftZone = (type === 'post') 
+    ? (["Hero", "Volunteer", "Independence fighter", "Educator", "Community contributor", "영웅", "봉사자", "독립운동가", "교육자", "지역사회 공헌 인물"].indexOf(item.category) !== -1)
+    : (item.x < 500); // legacy coordinate check
+  
+  let attempts = 0;
+  while (attempts < 100) {
+    if (isLeftZone) {
+      // Great Mine area: col 2 ~ 28, row 2 ~ 57
+      tileX = 2 + Math.floor(pseudoRandom() * 26);
+      tileY = 2 + Math.floor(pseudoRandom() * 55);
+    } else {
+      // Socially Vulnerable Mine area: col 32 ~ 57, row 2 ~ 57
+      tileX = 32 + Math.floor(pseudoRandom() * 25);
+      tileY = 2 + Math.floor(pseudoRandom() * 55);
+    }
+    
+    if (mapGrid[tileY] && mapGrid[tileY][tileX] === 0) {
+      break;
+    }
+    attempts++;
+  }
+  
+  item._worldX = tileX * TILE_SIZE;
+  item._worldY = tileY * TILE_SIZE;
+  return { x: item._worldX, y: item._worldY };
+}
+
+// Bounding box tile collision check
+function checkWallCollision(x, y) {
+  const paddingX = 4;
+  const paddingY = 16;
+  const box = {
+    left: x + paddingX,
+    right: x + player.width - paddingX,
+    top: y + player.height - paddingY,
+    bottom: y + player.height
+  };
+  
+  const startCol = Math.floor(box.left / TILE_SIZE);
+  const endCol = Math.floor(box.right / TILE_SIZE);
+  const startRow = Math.floor(box.top / TILE_SIZE);
+  const endRow = Math.floor(box.bottom / TILE_SIZE);
+  
+  for (let r = startRow; r <= endRow; r++) {
+    for (let c = startCol; c <= endCol; c++) {
+      if (r < 0 || r >= MAP_SIZE || c < 0 || c >= MAP_SIZE) {
+        return true;
+      }
+      if (mapGrid[r][c] === 1) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 // Pickaxe upgrade configurations
 const pickaxes = {
@@ -38,8 +142,8 @@ const pickaxes = {
 
 // Player Object
 const player = {
-  x: 100 * TILE_SIZE, // Start at Great Person Town
-  y: 0,
+  x: 15 * TILE_SIZE, // Start in Great Mine
+  y: 30 * TILE_SIZE,
   z: 0,
   vx: 0,
   vy: 0,
@@ -47,15 +151,13 @@ const player = {
   width: 24,
   height: 44,
   speed: 6.5,
-  jumpForce: -9, // Lower jump force on Z height for 2.5D jumping
+  jumpForce: -9,
   gravity: 0.5,
   grounded: true,
   direction: 1, // 1 = right, -1 = left
   animFrame: 0,
   animTimer: 0,
   isMoving: false,
-  
-  // Mining animations variables
   isSwinging: false,
   swingAngle: 0,
   swingTimer: 0
@@ -66,8 +168,6 @@ const camera = {
   x: 0,
   y: 0,
   lerpSpeed: 0.1,
-  
-  // Screen shake variables
   shakeTimer: 0,
   shakeIntensity: 0,
   shakeX: 0,
@@ -76,17 +176,17 @@ const camera = {
 
 // Visual Juice Particles and Floating text
 const juice = {
-  particles: [],     // Array of gravity-simulated chips
-  floatingTexts: []  // Bouncing damage/gold/XP numbers
+  particles: [],
+  floatingTexts: []
 };
 
-// Static NPCs list
+// Static NPCs list with Grid coordinates
 const npcs = [
-  { id: "READ_3", name: "기록가 할아버지", unitX: 100, emoji: "👴", questTitle: "독서 입문자", questDesc: "친구들의 인물 블록 3개를 찾아서 읽어보세요.", rewardXp: 50, rewardBadge: "독서 입문자" },
-  { id: "LIKE_5", name: "마을 선생님", unitX: 250, emoji: "👩‍🏫", questTitle: "공감의 요정", questDesc: "친구들의 인물 블록에 좋아요를 5회 눌러주세요.", rewardXp: 30, rewardBadge: "공감의 요정" },
-  { id: "COMMENT_2", name: "도서관 사서", unitX: 400, emoji: "🧙‍♂️", questTitle: "친절한 이웃", questDesc: "친구들의 인물 블록에 친절한 댓글을 2개 남겨보세요.", rewardXp: 40, rewardBadge: "친절한 이웃" },
-  { id: "FIND_GREAT", name: "환경 지킴이", unitX: 620, emoji: "👨‍🌾", questTitle: "역사 탐험가", questDesc: "위대한 인물 마을(x: 0~500)의 인물 블록을 1개 찾아 읽으세요.", rewardXp: 50, rewardBadge: "역사 탐험가" },
-  { id: "FIND_POOR", name: "복지 활동가", unitX: 820, emoji: "👩‍⚕️", questTitle: "따뜻한 시선", questDesc: "소외된 인물 마을(x: 501~1000)의 인물 블록을 1개 찾아 읽으세요.", rewardXp: 50, rewardBadge: "따뜻한 시선" }
+  { id: "READ_3", name: "기록가 할아버지", tileX: 5, tileY: 5, emoji: "👴", questTitle: "독서 입문자", questDesc: "친구들의 인물 블록 3개를 찾아서 읽어보세요.", rewardXp: 50, rewardBadge: "독서 입문자" },
+  { id: "LIKE_5", name: "마을 선생님", tileX: 15, tileY: 20, emoji: "👩‍🏫", questTitle: "공감의 요정", questDesc: "친구들의 인물 블록에 좋아요를 5회 눌러주세요.", rewardXp: 30, rewardBadge: "공감의 요정" },
+  { id: "COMMENT_2", name: "도서관 사서", tileX: 8, tileY: 45, emoji: "🧙‍♂️", questTitle: "친절한 이웃", questDesc: "친구들의 인물 블록에 친절한 댓글을 2개 남겨보세요.", rewardXp: 40, rewardBadge: "친절한 이웃" },
+  { id: "FIND_GREAT", name: "환경 지킴이", tileX: 35, tileY: 10, emoji: "👨‍🌾", questTitle: "역사 탐험가", questDesc: "위대한 인물 마을(x: 0~500)의 인물 블록을 1개 찾아 읽으세요.", rewardXp: 50, rewardBadge: "역사 탐험가" },
+  { id: "FIND_POOR", name: "복지 활동가", tileX: 50, tileY: 40, emoji: "👩‍⚕️", questTitle: "따뜻한 시선", questDesc: "소외된 인물 마을(x: 501~1000)의 인물 블록을 1개 찾아 읽으세요.", rewardXp: 50, rewardBadge: "따뜻한 시선" }
 ];
 
 // Achievements Badge Metadata
@@ -323,9 +423,13 @@ function loadGameData() {
       
       // Center camera on player
       resizeCanvas();
-      player.y = GROUND_Y; // Align player with cavern floor center!
+      player.x = 15 * TILE_SIZE;
+      player.y = 30 * TILE_SIZE;
+      
       camera.x = player.x - canvas.width / 2;
+      camera.y = player.y - canvas.height / 2;
       camera.x = Math.max(0, Math.min(camera.x, WORLD_WIDTH - canvas.width));
+      camera.y = Math.max(0, Math.min(camera.y, WORLD_HEIGHT - canvas.height));
       
       if (!gameLoopId) {
         gameLoopId = requestAnimationFrame(gameLoop);
@@ -402,13 +506,33 @@ function updateHUD() {
   const xpPercent = Math.min(100, Math.max(0, (levelXpGained / levelXpRequired) * 100));
   document.getElementById('hud-xp-fill').style.width = xpPercent + '%';
   document.getElementById('hud-xp-text').innerText = `${state.xp} / ${nextLvlMin} XP`;
+
+  // Calculate and update Mine Knights style remaining ores
+  const activePosts = (state.posts || []).filter(p => !state.postHp[p.postId] || state.postHp[p.postId].hp > 0).length;
+  const activeBonus = (state.bonusOres || []).filter(ore => !ore.hasMined).length;
+  const totalPosts = (state.posts || []).length;
+  const totalBonus = (state.bonusOres || []).length;
+
+  const remainingOresEl = document.getElementById('hud-remaining-ores');
+  const totalOresEl = document.getElementById('hud-total-ores');
+  if (remainingOresEl && totalOresEl) {
+    remainingOresEl.innerText = activePosts + activeBonus;
+    totalOresEl.innerText = totalPosts + totalBonus;
+  }
 }
 
 function teleportPlayer(unitX) {
-  player.x = unitX * TILE_SIZE;
+  if (unitX < 500) {
+    player.x = 15 * TILE_SIZE;
+    player.y = 15 * TILE_SIZE;
+  } else {
+    player.x = 45 * TILE_SIZE;
+    player.y = 15 * TILE_SIZE;
+  }
   player.vx = 0;
   player.vy = 0;
   camera.x = player.x - canvas.width / 2;
+  camera.y = player.y - canvas.height / 2;
 }
 
 // Get equipped pickaxe config (highest owned tier)
@@ -793,14 +917,16 @@ function mineOreBlock(blockId, isBonus = false) {
     else if (ore.name.includes("루비")) pColor = "#ef4444";
     else if (ore.name.includes("마법")) pColor = "#a78bfa";
     
-    spawnHitParticles(ore.x * TILE_SIZE + 24, GROUND_Y + ore.y + 24, pColor);
-    spawnFloatingText(ore.x * TILE_SIZE + 24, GROUND_Y + ore.y - 12, `-${equipped.power} HP`, "#fca5a5");
-    triggerCameraShake(4, 2);
+    const coords = getEntityWorldCoords(ore, 'bonus_ore');
+    spawnHitParticles(coords.x + TILE_SIZE/2, coords.y + TILE_SIZE/2, pColor);
+    spawnFloatingText(coords.x + TILE_SIZE/2, coords.y - 12, `-${equipped.power} HP`, "#fca5a5");
+    spawnFloatingText(coords.x + TILE_SIZE/2 + (Math.random() - 0.5) * 20, coords.y - 25, `+${equipped.power * 2}🪙`, "#ffd700");
+    triggerCameraShake(6, 4);
     
     if (blockData.hp <= 0) {
       blockData.hp = 0;
-      spawnShatterParticles(ore.x * TILE_SIZE + 24, GROUND_Y + ore.y + 24, pColor);
-      triggerCameraShake(12, 6);
+      spawnShatterParticles(coords.x + TILE_SIZE/2, coords.y + TILE_SIZE/2, pColor);
+      triggerCameraShake(14, 8);
       
       callApi('mineBonusOre', { userId: state.user.userId, oreId: blockId })
         .then((gameData) => {
@@ -824,14 +950,16 @@ function mineOreBlock(blockId, isBonus = false) {
     const isGreat = ["Hero", "Volunteer", "Independence fighter", "Educator", "Community contributor", "영웅", "봉사자", "독립운동가", "교육자", "지역사회 공헌 인물"].indexOf(p.category) !== -1;
     const blockColor = isGreat ? "#06b6d4" : "#ef4444";
     
-    spawnHitParticles(p.x * TILE_SIZE + 24, GROUND_Y + p.y + 24, blockColor);
-    spawnFloatingText(p.x * TILE_SIZE + 24, GROUND_Y + p.y - 12, `-${equipped.power} HP`, "#fca5a5");
-    triggerCameraShake(4, 2);
+    const coords = getEntityWorldCoords(p, 'post');
+    spawnHitParticles(coords.x + TILE_SIZE/2, coords.y + TILE_SIZE/2, blockColor);
+    spawnFloatingText(coords.x + TILE_SIZE/2, coords.y - 12, `-${equipped.power} HP`, "#fca5a5");
+    spawnFloatingText(coords.x + TILE_SIZE/2 + (Math.random() - 0.5) * 20, coords.y - 25, `Hit! 💥`, "#ffffff");
+    triggerCameraShake(6, 4);
     
     if (blockData.hp <= 0) {
       blockData.hp = 0;
-      spawnShatterParticles(p.x * TILE_SIZE + 24, GROUND_Y + p.y + 24, blockColor);
-      triggerCameraShake(12, 6);
+      spawnShatterParticles(coords.x + TILE_SIZE/2, coords.y + TILE_SIZE/2, blockColor);
+      triggerCameraShake(14, 8);
       openBlockDetail(blockId);
     }
   }
@@ -840,11 +968,10 @@ function mineOreBlock(blockId, isBonus = false) {
 function checkInteraction() {
   // Check NPCs collision
   for (const npc of npcs) {
-    const npcX = npc.unitX * TILE_SIZE;
-    const distance = Math.abs(player.x - npcX);
-    const npcYDepth = (npc.unitX % 3) * 15 - 10;
-    const dy = Math.abs(player.y - (GROUND_Y + npcYDepth));
-    if (distance < 50 && dy < 40) {
+    const npcX = npc.tileX * TILE_SIZE;
+    const npcY = npc.tileY * TILE_SIZE;
+    const distance = Math.sqrt(Math.pow((player.x + player.width/2) - (npcX + TILE_SIZE/2), 2) + Math.pow((player.y + player.height) - (npcY + TILE_SIZE), 2));
+    if (distance < 60) {
       openNpcDialogue(npc);
       return;
     }
@@ -852,13 +979,14 @@ function checkInteraction() {
   
   // Check Blocks and Bonus Ores collision
   let closestBlock = null;
-  let minDist = 70;
+  let minDist = 75;
   
   // Check student blocks
   (state.posts || []).forEach(p => {
-    const bx = p.x * TILE_SIZE + 24;
-    const by = GROUND_Y + p.y + 24;
-    const dist = Math.sqrt(Math.pow((player.x + 12) - bx, 2) + Math.pow(player.y - by, 2));
+    const coords = getEntityWorldCoords(p, 'post');
+    const bx = coords.x + TILE_SIZE/2;
+    const by = coords.y + TILE_SIZE/2;
+    const dist = Math.sqrt(Math.pow((player.x + player.width/2) - bx, 2) + Math.pow((player.y + player.height/2) - by, 2));
     if (dist < minDist) {
       closestBlock = { type: 'post', id: p.postId, data: p };
       minDist = dist;
@@ -867,9 +995,10 @@ function checkInteraction() {
   
   // Check bonus ores
   (state.bonusOres || []).forEach(ore => {
-    const bx = ore.x * TILE_SIZE + 24;
-    const by = GROUND_Y + ore.y + 24;
-    const dist = Math.sqrt(Math.pow((player.x + 12) - bx, 2) + Math.pow(player.y - by, 2));
+    const coords = getEntityWorldCoords(ore, 'bonus_ore');
+    const bx = coords.x + TILE_SIZE/2;
+    const by = coords.y + TILE_SIZE/2;
+    const dist = Math.sqrt(Math.pow((player.x + player.width/2) - bx, 2) + Math.pow((player.y + player.height/2) - by, 2));
     if (dist < minDist) {
       closestBlock = { type: 'bonus_ore', id: ore.oreId, data: ore };
       minDist = dist;
@@ -899,14 +1028,13 @@ function checkInteraction() {
 function handleCanvasClick(e) {
   const rect = canvas.getBoundingClientRect();
   const clickX = e.clientX - rect.left + camera.x;
-  const clickY = e.clientY - rect.top;
+  const clickY = e.clientY - rect.top + camera.y;
   
   // Check if click was on NPC
   for (const npc of npcs) {
-    const npcX = npc.unitX * TILE_SIZE;
-    const npcYDepth = (npc.unitX % 3) * 15 - 10;
-    const npcY = GROUND_Y + npcYDepth;
-    if (clickX >= npcX - 16 && clickX <= npcX + 32 && clickY >= npcY && clickY <= npcY + 48) {
+    const npcX = npc.tileX * TILE_SIZE;
+    const npcY = npc.tileY * TILE_SIZE;
+    if (clickX >= npcX && clickX <= npcX + TILE_SIZE && clickY >= npcY && clickY <= npcY + TILE_SIZE + 16) {
       openNpcDialogue(npc);
       return;
     }
@@ -914,9 +1042,10 @@ function handleCanvasClick(e) {
   
   // Check if click was on student block
   for (const p of (state.posts || [])) {
-    const bx = p.x * TILE_SIZE;
-    const by = GROUND_Y + p.y;
-    if (clickX >= bx && clickX <= bx + 48 && clickY >= by && clickY <= by + 48) {
+    const coords = getEntityWorldCoords(p, 'post');
+    const bx = coords.x;
+    const by = coords.y;
+    if (clickX >= bx && clickX <= bx + TILE_SIZE && clickY >= by && clickY <= by + TILE_SIZE) {
       if (bx > player.x) player.direction = 1;
       else player.direction = -1;
       
@@ -932,9 +1061,10 @@ function handleCanvasClick(e) {
 
   // Check if click was on bonus ore
   for (const ore of (state.bonusOres || [])) {
-    const bx = ore.x * TILE_SIZE;
-    const by = GROUND_Y + ore.y;
-    if (clickX >= bx && clickX <= bx + 48 && clickY >= by && clickY <= by + 48) {
+    const coords = getEntityWorldCoords(ore, 'bonus_ore');
+    const bx = coords.x;
+    const by = coords.y;
+    if (clickX >= bx && clickX <= bx + TILE_SIZE && clickY >= by && clickY <= by + TILE_SIZE) {
       if (bx > player.x) player.direction = 1;
       else player.direction = -1;
       
@@ -1054,31 +1184,38 @@ let gameLoopId = null;
 function updatePhysics() {
   player.isMoving = false;
   
+  let dx = 0;
+  let dy = 0;
+  
   // Horizontal movement (X-axis)
   if (keys['ArrowLeft'] || keys['KeyA']) {
-    player.vx = -player.speed;
+    dx = -1;
     player.direction = -1;
     player.isMoving = true;
   } else if (keys['ArrowRight'] || keys['KeyD']) {
-    player.vx = player.speed;
+    dx = 1;
     player.direction = 1;
     player.isMoving = true;
-  } else {
-    player.vx *= 0.7;
-    if (Math.abs(player.vx) < 0.1) player.vx = 0;
   }
   
-  // Depth movement (Y-axis for 2.5D top-down)
+  // Vertical movement (Y-axis)
   if (keys['ArrowUp'] || keys['KeyW']) {
-    player.vy = -player.speed * 0.7; // Walk slightly slower vertically to enhance visual depth
+    dy = -1;
     player.isMoving = true;
   } else if (keys['ArrowDown'] || keys['KeyS']) {
-    player.vy = player.speed * 0.7;
+    dy = 1;
     player.isMoving = true;
-  } else {
-    player.vy *= 0.7;
-    if (Math.abs(player.vy) < 0.1) player.vy = 0;
   }
+  
+  // Normalize movement vector to prevent diagonal speed boosting
+  if (dx !== 0 && dy !== 0) {
+    const len = Math.sqrt(dx * dx + dy * dy);
+    dx /= len;
+    dy /= len;
+  }
+  
+  player.vx = dx * player.speed;
+  player.vy = dy * player.speed;
   
   // Jump Height movement (Z-axis)
   if (keys['Space'] && player.z === 0) {
@@ -1087,31 +1224,26 @@ function updatePhysics() {
   }
   
   player.vz += player.gravity;
-  player.x += player.vx;
-  player.y += player.vy;
   player.z += player.vz;
   
-  // Clamp boundaries on X axis
-  if (player.x < 0) {
-    player.x = 0;
-    player.vx = 0;
-  }
-  if (player.x > WORLD_WIDTH - player.width) {
-    player.x = WORLD_WIDTH - player.width;
+  // Independent X and Y axis collision checks (allows smooth wall sliding)
+  const newX = player.x + player.vx;
+  if (!checkWallCollision(newX, player.y)) {
+    player.x = newX;
+  } else {
     player.vx = 0;
   }
   
-  // Clamp boundaries on Y depth axis (cavern floor strip)
-  const FLOOR_TOP = GROUND_Y - 50;
-  const FLOOR_BOTTOM = GROUND_Y + 50;
-  if (player.y < FLOOR_TOP) {
-    player.y = FLOOR_TOP;
+  const newY = player.y + player.vy;
+  if (!checkWallCollision(player.x, newY)) {
+    player.y = newY;
+  } else {
     player.vy = 0;
   }
-  if (player.y > FLOOR_BOTTOM) {
-    player.y = FLOOR_BOTTOM;
-    player.vy = 0;
-  }
+  
+  // Clamp boundaries to map size minus border tiles
+  player.x = Math.max(TILE_SIZE, Math.min(player.x, WORLD_WIDTH - TILE_SIZE - player.width));
+  player.y = Math.max(TILE_SIZE, Math.min(player.y, WORLD_HEIGHT - TILE_SIZE - player.height));
   
   // Clamp Z height (floor level)
   if (player.z > 0) {
@@ -1120,10 +1252,13 @@ function updatePhysics() {
     player.grounded = true;
   }
   
-  // Camera smooth horizontal follow
+  // Camera smooth follow on both X and Y axes
   const targetCamX = player.x - canvas.width / 2;
+  const targetCamY = player.y - canvas.height / 2;
   camera.x += (targetCamX - camera.x) * camera.lerpSpeed;
+  camera.y += (targetCamY - camera.y) * camera.lerpSpeed;
   camera.x = Math.max(0, Math.min(camera.x, WORLD_WIDTH - canvas.width));
+  camera.y = Math.max(0, Math.min(camera.y, WORLD_HEIGHT - canvas.height));
   
   // Camera Shake trigger math
   if (camera.shakeTimer > 0) {
@@ -1274,142 +1409,111 @@ function draw3DCube(x, y, w, h, d, faceColor, topColor, sideColor, cracksRatio, 
   
   // Label Card
   ctx.fillStyle = "rgba(0,0,0,0.85)";
-  ctx.fillRect(x - 20, y - 36, 88, 24);
+  ctx.fillRect(x - 20, y - 36, w + 40, 24);
   ctx.strokeStyle = hasMined ? "#55ff55" : (isGreat ? "#4dedf5" : "#ff5555");
   ctx.lineWidth = 1.5;
-  ctx.strokeRect(x - 20, y - 36, 88, 24);
+  ctx.strokeRect(x - 20, y - 36, w + 40, 24);
   
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 8px var(--font-retro)";
   ctx.textAlign = "center";
-  ctx.fillText(name, x + 24, y - 26);
+  ctx.fillText(name, x + w/2, y - 26);
   
   ctx.fillStyle = hasMined ? "#55ff55" : "#aaaaaa";
   ctx.font = "6px var(--font-retro)";
-  ctx.fillText(labelText, x + 24, y - 16);
+  ctx.fillText(labelText, x + w/2, y - 16);
 }
 
 function drawGame() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   
-  // 1. Cavern roof backgrounds wall
-  ctx.fillStyle = "#161b22";
-  ctx.fillRect(0, 0, canvas.width, GROUND_Y - 50);
+  // Calculate viewport boundaries (optimization for rendering only what is visible)
+  const startCol = Math.max(0, Math.floor(camera.x / TILE_SIZE));
+  const endCol = Math.min(MAP_SIZE - 1, Math.floor((camera.x + canvas.width) / TILE_SIZE));
+  const startRow = Math.max(0, Math.floor(camera.y / TILE_SIZE));
+  const endRow = Math.min(MAP_SIZE - 1, Math.floor((camera.y + canvas.height) / TILE_SIZE));
   
-  // Cavern detail crystals parallax back-drawings
   ctx.save();
-  ctx.translate(-camera.x * 0.3, 0);
-  for (let i = 0; i < 40; i++) {
-    const cx = i * 800 + 100;
-    const isGreatZone = cx < (500 * TILE_SIZE);
-    ctx.fillStyle = isGreatZone ? "rgba(6, 182, 212, 0.12)" : "rgba(239, 68, 68, 0.12)";
-    ctx.fillRect(cx, 80, 48, 80);
-    ctx.fillRect(cx + 80, 160, 60, 40);
+  ctx.translate(-camera.x + camera.shakeX, -camera.y + camera.shakeY);
+  
+  // Floor Rendering (viewport optimized)
+  for (let r = startRow; r <= endRow; r++) {
+    for (let c = startCol; c <= endCol; c++) {
+      const tx = c * TILE_SIZE;
+      const ty = r * TILE_SIZE;
+      
+      // Draw grid stone tiles (Mine Knights cavern style)
+      ctx.fillStyle = (c === 30) ? "#1f2937" : ((c + r) % 2 === 0 ? "#1e293b" : "#111827");
+      ctx.fillRect(tx, ty, TILE_SIZE, TILE_SIZE);
+      
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.02)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(tx, ty, TILE_SIZE, TILE_SIZE);
+    }
   }
-  ctx.restore();
-  
-  // Apply camera translation
-  ctx.save();
-  ctx.translate(-camera.x + camera.shakeX, camera.shakeY);
-  
-  // Stalactites
-  ctx.fillStyle = "#0f131a";
-  ctx.fillRect(0, 0, WORLD_WIDTH, 20);
-  ctx.beginPath();
-  for (let sx = 0; sx < WORLD_WIDTH; sx += 64) {
-    ctx.moveTo(sx, 20);
-    ctx.lineTo(sx + 32, 60 + (sx % 3) * 15);
-    ctx.lineTo(sx + 64, 20);
-  }
-  ctx.closePath();
-  ctx.fill();
-  
-  // Cavern 3D Perspective Floor
-  const floorTop = GROUND_Y - 60;
-  const floorBottom = GROUND_Y + 60;
-  
-  // Render floor base
-  ctx.fillStyle = "#2d3540"; // Cave floor stone gray
-  ctx.fillRect(0, floorTop, WORLD_WIDTH, floorBottom - floorTop);
-  
-  // perspective guidelines
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
-  ctx.lineWidth = 2;
-  for (let fy = floorTop; fy <= floorBottom; fy += 20) {
-    ctx.beginPath();
-    ctx.moveTo(0, fy);
-    ctx.lineTo(WORLD_WIDTH, fy);
-    ctx.stroke();
-  }
-  for (let fx = 0; fx < WORLD_WIDTH; fx += 96) {
-    ctx.beginPath();
-    ctx.moveTo(fx, floorTop);
-    ctx.lineTo(fx + (fx - player.x) * 0.05, floorBottom);
-    ctx.stroke();
-  }
-  
-  // Town separation line
-  const borderX = 500 * TILE_SIZE;
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";
-  ctx.lineWidth = 12;
-  ctx.beginPath();
-  ctx.moveTo(borderX, floorTop);
-  ctx.lineTo(borderX, floorBottom);
-  ctx.stroke();
-  
-  // Signboard
-  ctx.fillStyle = "#4a3b32";
-  ctx.fillRect(borderX - 90, floorTop - 60, 180, 40);
-  ctx.fillStyle = "#111";
-  ctx.fillRect(borderX - 90, floorTop - 60, 180, 40);
-  ctx.strokeStyle = "#8b8b8b";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(borderX - 90, floorTop - 60, 180, 40);
-  
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 9px var(--font-retro)";
-  ctx.textAlign = "center";
-  ctx.fillText("← 위대한 광산 | 소외된 광산 →", borderX, floorTop - 40);
-  
-  ctx.fillStyle = "#333";
-  ctx.fillRect(borderX - 8, floorTop - 20, 16, 20);
   
   // 2.5D Depth Sorting List
   const drawables = [];
   
+  // Add static Solid Wall columns inside the viewport
+  for (let r = startRow; r <= endRow; r++) {
+    for (let c = startCol; c <= endCol; c++) {
+      if (mapGrid[r][c] === 1) {
+        drawables.push({
+          type: 'wall',
+          x: c * TILE_SIZE,
+          y: r * TILE_SIZE + TILE_SIZE, // Base line for sorting
+          tileX: c,
+          tileY: r
+        });
+      }
+    }
+  }
+  
   // Add NPCs
   npcs.forEach(npc => {
-    const npcYDepth = (npc.unitX % 3) * 20 - 20; // -20 to 20
-    drawables.push({
-      type: 'npc',
-      y: GROUND_Y + npcYDepth,
-      data: npc,
-      npcYDepth: npcYDepth
-    });
+    const nx = npc.tileX * TILE_SIZE;
+    const ny = npc.tileY * TILE_SIZE;
+    if (nx + TILE_SIZE >= camera.x && nx <= camera.x + canvas.width &&
+        ny + TILE_SIZE >= camera.y && ny <= camera.y + canvas.height) {
+      drawables.push({
+        type: 'npc',
+        y: ny + TILE_SIZE,
+        data: npc
+      });
+    }
   });
   
   // Add Posts (student blocks)
   (state.posts || []).forEach(p => {
-    drawables.push({
-      type: 'post',
-      y: GROUND_Y + Number(p.y || 0),
-      data: p
-    });
+    const coords = getEntityWorldCoords(p, 'post');
+    if (coords.x + TILE_SIZE >= camera.x && coords.x <= camera.x + canvas.width &&
+        coords.y + TILE_SIZE >= camera.y && coords.y <= camera.y + canvas.height) {
+      drawables.push({
+        type: 'post',
+        y: coords.y + TILE_SIZE,
+        data: p
+      });
+    }
   });
   
   // Add Bonus Ores
   (state.bonusOres || []).forEach(ore => {
-    drawables.push({
-      type: 'bonus_ore',
-      y: GROUND_Y + Number(ore.y || 0),
-      data: ore
-    });
+    const coords = getEntityWorldCoords(ore, 'bonus_ore');
+    if (coords.x + TILE_SIZE >= camera.x && coords.x <= camera.x + canvas.width &&
+        coords.y + TILE_SIZE >= camera.y && coords.y <= camera.y + canvas.height) {
+      drawables.push({
+        type: 'bonus_ore',
+        y: coords.y + TILE_SIZE,
+        data: ore
+      });
+    }
   });
   
   // Add Player
   drawables.push({
     type: 'player',
-    y: player.y,
+    y: player.y + player.height,
     data: player
   });
   
@@ -1418,41 +1522,76 @@ function drawGame() {
   
   // Render items in sorted order
   drawables.forEach(item => {
-    if (item.type === 'npc') {
+    if (item.type === 'wall') {
+      const wx = item.x;
+      const wy = item.y - TILE_SIZE;
+      
+      // Bottom/Front face
+      ctx.fillStyle = "#374151";
+      ctx.fillRect(wx, wy, TILE_SIZE, TILE_SIZE);
+      ctx.strokeStyle = "#000000";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(wx, wy, TILE_SIZE, TILE_SIZE);
+      
+      // Top face (lighter stone block)
+      ctx.fillStyle = "#4b5563";
+      ctx.beginPath();
+      ctx.moveTo(wx, wy);
+      ctx.lineTo(wx + 8, wy - 8);
+      ctx.lineTo(wx + TILE_SIZE + 8, wy - 8);
+      ctx.lineTo(wx + TILE_SIZE, wy);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      
+      // Side face (darker)
+      ctx.fillStyle = "#1f2937";
+      ctx.beginPath();
+      ctx.moveTo(wx + TILE_SIZE, wy);
+      ctx.lineTo(wx + TILE_SIZE + 8, wy - 8);
+      ctx.lineTo(wx + TILE_SIZE + 8, wy + TILE_SIZE - 8);
+      ctx.lineTo(wx + TILE_SIZE, wy + TILE_SIZE);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      
+    } else if (item.type === 'npc') {
       const npc = item.data;
-      const nx = npc.unitX * TILE_SIZE;
-      const ny = item.y - 48;
+      const nx = npc.tileX * TILE_SIZE;
+      const ny = npc.tileY * TILE_SIZE;
       
       // Shadow
-      ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+      ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
       ctx.beginPath();
-      ctx.ellipse(nx + 16, item.y, 16, 6, 0, 0, Math.PI * 2);
+      ctx.ellipse(nx + TILE_SIZE/2, ny + TILE_SIZE - 4, TILE_SIZE/2 - 4, 6, 0, 0, Math.PI * 2);
       ctx.fill();
       
       // Body
       ctx.fillStyle = "#475569";
-      ctx.fillRect(nx, ny + 16, 32, 32);
+      ctx.fillRect(nx + 6, ny + 14, TILE_SIZE - 12, TILE_SIZE - 14);
       ctx.strokeStyle = "#000";
       ctx.lineWidth = 3;
-      ctx.strokeRect(nx, ny + 16, 32, 32);
+      ctx.strokeRect(nx + 6, ny + 14, TILE_SIZE - 12, TILE_SIZE - 14);
       
       // Head
       ctx.fillStyle = "#e5c59e";
-      ctx.fillRect(nx + 4, ny, 24, 20);
-      ctx.strokeRect(nx + 4, ny, 24, 20);
+      ctx.fillRect(nx + 10, ny - 2, TILE_SIZE - 20, 16);
+      ctx.strokeRect(nx + 10, ny - 2, TILE_SIZE - 20, 16);
       
       ctx.font = "16px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(npc.emoji, nx + 16, ny + 10);
+      ctx.fillText(npc.emoji, nx + TILE_SIZE/2, ny + 6);
       
-      ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-      ctx.fillRect(nx - 16, ny - 32, 64, 16);
+      // Name Tag
+      ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+      ctx.fillRect(nx - 10, ny - 32, TILE_SIZE + 20, 15);
       ctx.fillStyle = "#ffffff";
-      ctx.font = "8px var(--font-retro)";
+      ctx.font = "bold 8px var(--font-retro)";
       ctx.textAlign = "center";
-      ctx.fillText(npc.name.split(' ')[0], nx + 16, ny - 21);
+      ctx.fillText(npc.name.split(' ')[0], nx + TILE_SIZE/2, ny - 23);
       
+      // Quest status indicator
       const quest = (state.quests || []).find(q => q.questType === npc.id);
       const progress = quest ? Number(quest.progress) : 0;
       const status = quest ? quest.status : "IN_PROGRESS";
@@ -1464,22 +1603,23 @@ function drawGame() {
       
       if (status === "COMPLETED") {
         ctx.fillStyle = "#55ff55";
-        ctx.font = "bold 18px var(--font-retro)";
-        ctx.fillText("✔", nx + 16, ny - 42);
+        ctx.font = "bold 16px var(--font-retro)";
+        ctx.fillText("✔", nx + TILE_SIZE/2, ny - 42);
       } else if (progress >= target) {
         ctx.fillStyle = "#ffff55";
-        ctx.font = "bold 18px var(--font-retro)";
-        ctx.fillText("?", nx + 16, ny - 42);
+        ctx.font = "bold 16px var(--font-retro)";
+        ctx.fillText("?", nx + TILE_SIZE/2, ny - 42);
       } else {
         ctx.fillStyle = "#ff5555";
-        ctx.font = "bold 18px var(--font-retro)";
-        ctx.fillText("!", nx + 16, ny - 42);
+        ctx.font = "bold 16px var(--font-retro)";
+        ctx.fillText("!", nx + TILE_SIZE/2, ny - 42);
       }
       
     } else if (item.type === 'post') {
       const p = item.data;
-      const bx = p.x * TILE_SIZE;
-      const by = item.y - 48;
+      const coords = getEntityWorldCoords(p, 'post');
+      const bx = coords.x;
+      const by = coords.y;
       
       const isGreat = ["Hero", "Volunteer", "Independence fighter", "Educator", "Community contributor", "영웅", "봉사자", "독립운동가", "교육자", "지역사회 공헌 인물"].indexOf(p.category) !== -1;
       const blockData = state.postHp[p.postId] || { hp: 5, maxHp: 5 };
@@ -1499,7 +1639,7 @@ function drawGame() {
       const sideColor = isGreat ? "#05272e" : "#280303";
       
       draw3DCube(
-        bx + shakeOffset, by, 48, 48, 10,
+        bx + shakeOffset, by, TILE_SIZE, TILE_SIZE, 8,
         faceColor, topColor, sideColor,
         blockData.hp / (blockData.maxHp || 5), isMined, isGreat,
         personName, oreStatusText
@@ -1507,8 +1647,9 @@ function drawGame() {
       
     } else if (item.type === 'bonus_ore') {
       const ore = item.data;
-      const bx = ore.x * TILE_SIZE;
-      const by = item.y - 48;
+      const coords = getEntityWorldCoords(ore, 'bonus_ore');
+      const bx = coords.x;
+      const by = coords.y;
       const isMined = ore.hasMined;
       const blockData = state.bonusOresHp[ore.oreId] || { hp: 5, maxHp: 5 };
       
@@ -1534,9 +1675,9 @@ function drawGame() {
       const oreStatusText = isMined ? "완료(F)" : `보너스(F) H:${blockData.hp}`;
       
       draw3DCube(
-        bx + shakeOffset, by, 48, 48, 10,
+        bx + shakeOffset, by, TILE_SIZE, TILE_SIZE, 8,
         faceColor, topColor, sideColor,
-        blockData.hp / blockData.maxHp, isMined, true,
+        blockData.hp / (blockData.maxHp || 5), isMined, true,
         ore.name, oreStatusText
       );
       
@@ -1545,9 +1686,9 @@ function drawGame() {
       const py = player.y + player.z; // Apply jump height offset (Z axis)
       
       // Shadow (drawn flat on Y ground plane)
-      ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+      ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
       ctx.beginPath();
-      ctx.ellipse(px + 12, player.y + 42, 12, 4, 0, 0, Math.PI * 2);
+      ctx.ellipse(px + player.width/2, player.y + player.height - 4, player.width/2 - 2, 4, 0, 0, Math.PI * 2);
       ctx.fill();
       
       // Body
@@ -1608,23 +1749,23 @@ function drawGame() {
         
         // Wood Shaft
         ctx.strokeStyle = "#854d0e";
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 3.5;
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        ctx.lineTo(0, -32);
+        ctx.lineTo(0, -28);
         ctx.stroke();
         
         // Voxel Head
         ctx.fillStyle = equipped.color;
         ctx.beginPath();
-        ctx.moveTo(-16, -32);
-        ctx.lineTo(16, -32);
-        ctx.lineTo(12, -26);
-        ctx.lineTo(-12, -26);
+        ctx.moveTo(-14, -28);
+        ctx.lineTo(14, -28);
+        ctx.lineTo(10, -23);
+        ctx.lineTo(-10, -23);
         ctx.closePath();
         ctx.fill();
         ctx.strokeStyle = "#000";
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1.8;
         ctx.stroke();
         
         ctx.restore();
@@ -1636,7 +1777,6 @@ function drawGame() {
   juice.particles.forEach(p => {
     ctx.fillStyle = p.color;
     if (p.isGem) {
-      // Draw gemstone diamonds shape
       ctx.beginPath();
       ctx.moveTo(p.x, p.y - p.size);
       ctx.lineTo(p.x + p.size, p.y);
@@ -1645,7 +1785,6 @@ function drawGame() {
       ctx.closePath();
       ctx.fill();
     } else {
-      // Standard stone chips blocks
       ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
       ctx.strokeStyle = "#000";
       ctx.lineWidth = 1.2;
@@ -1660,13 +1799,18 @@ function drawGame() {
     ctx.textAlign = "center";
     ctx.fillText(t.text, t.x, t.y);
     
-    // Outline text
     ctx.strokeStyle = "#000000";
     ctx.lineWidth = 2;
     ctx.strokeText(t.text, t.x, t.y);
   });
   
   ctx.restore();
+}
+
+function gameLoop() {
+  updatePhysics();
+  drawGame();
+  gameLoopId = requestAnimationFrame(gameLoop);
 }
 
 function gameLoop() {
