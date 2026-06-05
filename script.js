@@ -327,10 +327,14 @@ function loadGameData() {
       camera.x = player.x - canvas.width / 2;
       camera.x = Math.max(0, Math.min(camera.x, WORLD_WIDTH - canvas.width));
       
-      startLoop();
+      if (!gameLoopId) {
+        gameLoopId = requestAnimationFrame(gameLoop);
+      }
     })
     .catch((err) => {
-      showScreen('screen-game');
+      console.error("Game data load failed:", err);
+      showScreen('screen-login');
+      openModal('modal-api-settings');
     });
 }
 
@@ -566,11 +570,12 @@ function showRecommendationCard() {
   }
   
   const p = state.recommendedPost;
-  document.getElementById('recom-title').innerText = p.title;
-  document.getElementById('recom-name').innerText = p.title.split('-')[0].trim();
-  document.getElementById('recom-author').innerText = p.author;
-  document.getElementById('recom-image').src = p.imageUrl;
-  document.getElementById('recom-summary').innerText = p.summary;
+  const title = p.title || "무명 - 인물 카드";
+  document.getElementById('recom-title').innerText = title;
+  document.getElementById('recom-name').innerText = title.includes('-') ? title.split('-')[0].trim() : title.trim();
+  document.getElementById('recom-author').innerText = p.author || "알 수 없음";
+  document.getElementById('recom-image').src = p.imageUrl || "";
+  document.getElementById('recom-summary').innerText = p.summary || "";
   
   openModal('modal-recommendation');
 }
@@ -583,15 +588,16 @@ function openBlockDetail(postId) {
   
   selectedPostId = postId;
   
-  document.getElementById('detail-title').innerText = p.title;
-  document.getElementById('detail-name').innerText = p.title.split('-')[0].trim();
-  document.getElementById('detail-category').innerText = p.category;
-  document.getElementById('detail-author').innerText = p.author;
-  document.getElementById('detail-image').src = p.imageUrl;
-  document.getElementById('detail-summary').innerText = p.summary;
-  document.getElementById('detail-paragraph').innerText = p.paragraph;
-  document.getElementById('detail-view-count').innerText = p.viewsCount;
-  document.getElementById('detail-like-count').innerText = p.likesCount;
+  const title = p.title || "무명 - 인물 카드";
+  document.getElementById('detail-title').innerText = title;
+  document.getElementById('detail-name').innerText = title.includes('-') ? title.split('-')[0].trim() : title.trim();
+  document.getElementById('detail-category').innerText = p.category || "일반";
+  document.getElementById('detail-author').innerText = p.author || "알 수 없음";
+  document.getElementById('detail-image').src = p.imageUrl || "";
+  document.getElementById('detail-summary').innerText = p.summary || "";
+  document.getElementById('detail-paragraph').innerText = p.paragraph || "";
+  document.getElementById('detail-view-count').innerText = p.viewsCount || 0;
+  document.getElementById('detail-like-count').innerText = p.likesCount || 0;
   
   const likeBtn = document.getElementById('detail-like-btn');
   if (p.hasLiked) {
@@ -1163,7 +1169,7 @@ function updatePhysics() {
 
 function draw3DCube(x, y, w, h, d, faceColor, topColor, sideColor, cracksRatio, hasMined, isGreat, name, labelText) {
   if (hasMined) {
-    const coreColor = isGreat ? "var(--mc-diamond)" : "var(--mc-red)";
+    const coreColor = isGreat ? "#4dedf5" : "#ff5555";
     if (faceColor === "#5d4a13") {
       ctx.fillStyle = "rgba(253, 184, 19, 0.15)";
     } else {
@@ -1174,7 +1180,7 @@ function draw3DCube(x, y, w, h, d, faceColor, topColor, sideColor, cracksRatio, 
     ctx.arc(x + w/2, y + h/2, 24, 0, Math.PI * 2);
     ctx.fill();
     
-    ctx.fillStyle = (faceColor === "#5d4a13") ? "var(--mc-gold)" : coreColor;
+    ctx.fillStyle = (faceColor === "#5d4a13") ? "#fdb813" : coreColor;
     ctx.beginPath();
     ctx.moveTo(x + w/2, y + 8);
     ctx.lineTo(x + w - 10, y + h/2);
@@ -1222,8 +1228,8 @@ function draw3DCube(x, y, w, h, d, faceColor, topColor, sideColor, cracksRatio, 
     ctx.strokeRect(x, y, w, h);
     
     // Glowing gems
-    ctx.fillStyle = isGreat ? "var(--mc-diamond)" : "var(--mc-red)";
-    if (faceColor === "#5d4a13") ctx.fillStyle = "var(--mc-gold)";
+    ctx.fillStyle = isGreat ? "#4dedf5" : "#ff5555";
+    if (faceColor === "#5d4a13") ctx.fillStyle = "#fdb813";
     else if (faceColor === "#0d3a1b") ctx.fillStyle = "#22c55e";
     else if (faceColor === "#2e1065") ctx.fillStyle = "#a78bfa";
     
@@ -1260,7 +1266,7 @@ function draw3DCube(x, y, w, h, d, faceColor, topColor, sideColor, cracksRatio, 
     ctx.fillStyle = "#000";
     ctx.fillRect(x + 4, y - 8, 40, 5);
     const hpWidth = Math.floor(40 * cracksRatio);
-    ctx.fillStyle = (faceColor === "#5d4a13") ? "var(--mc-gold)" : (isGreat ? "var(--mc-diamond)" : "var(--mc-red)");
+    ctx.fillStyle = (faceColor === "#5d4a13") ? "#fdb813" : (isGreat ? "#4dedf5" : "#ff5555");
     if (faceColor === "#0d3a1b") ctx.fillStyle = "#22c55e";
     if (faceColor === "#2e1065") ctx.fillStyle = "#a78bfa";
     ctx.fillRect(x + 4, y - 8, hpWidth, 5);
@@ -1269,7 +1275,7 @@ function draw3DCube(x, y, w, h, d, faceColor, topColor, sideColor, cracksRatio, 
   // Label Card
   ctx.fillStyle = "rgba(0,0,0,0.85)";
   ctx.fillRect(x - 20, y - 36, 88, 24);
-  ctx.strokeStyle = hasMined ? "#55ff55" : (isGreat ? "var(--mc-diamond)" : "var(--mc-red)");
+  ctx.strokeStyle = hasMined ? "#55ff55" : (isGreat ? "#4dedf5" : "#ff5555");
   ctx.lineWidth = 1.5;
   ctx.strokeRect(x - 20, y - 36, 88, 24);
   
@@ -1484,7 +1490,8 @@ function drawGame() {
         shakeOffset = (p.shakeTime % 2 === 0 ? 1 : -1) * 4;
       }
       
-      const personName = p.title.split('-')[0].trim();
+      const title = p.title || "무명 - 인물 카드";
+      const personName = title.includes('-') ? title.split('-')[0].trim() : title.trim();
       const oreStatusText = isMined ? "완료(F)" : `채굴(F) H:${blockData.hp}`;
       
       const faceColor = isGreat ? "#0b4e5b" : "#4c0505";
@@ -1494,7 +1501,7 @@ function drawGame() {
       draw3DCube(
         bx + shakeOffset, by, 48, 48, 10,
         faceColor, topColor, sideColor,
-        blockData.hp / blockData.maxHp, isMined, isGreat,
+        blockData.hp / (blockData.maxHp || 5), isMined, isGreat,
         personName, oreStatusText
       );
       

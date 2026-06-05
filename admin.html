@@ -787,7 +787,8 @@
         
         block.classList.add(colorClass);
         
-        const namePart = p.title.split('-')[0].trim();
+        const title = p.title || "무명 - 인물";
+        const namePart = title.includes('-') ? title.split('-')[0].trim() : title.trim();
         block.innerHTML = `
           <div class="heatmap-block-name">${namePart}</div>
           <div class="heatmap-block-views">👁${p.views}</div>
