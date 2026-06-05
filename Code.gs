@@ -35,7 +35,7 @@ function doGet(e) {
       );
     } 
     else if (action === 'readBlock') {
-      result = readBlock(e.parameter.userId, e.parameter.postId);
+      result = readBlock(e.parameter.userId, e.parameter.postId, Number(e.parameter.bonusGold || 0));
     } 
     else if (action === 'toggleLike') {
       result = toggleLike(e.parameter.userId, e.parameter.postId);
@@ -61,8 +61,8 @@ function doGet(e) {
       result = buyPickaxe(e.parameter.userId, e.parameter.pickaxeTier, Number(e.parameter.cost));
     }
     else if (action === 'mineBonusOre') {
-      result = mineBonusOre(e.parameter.userId, e.parameter.oreId);
-    }
+      result = mineBonusOre(e.parameter.userId, e.parameter.oreId, Number(e.parameter.bonusGold || 0));
+    } 
     else {
       throw new Error("Invalid action: " + action);
     }
@@ -542,7 +542,7 @@ function getDailyRecommendation(posts) {
 }
 
 // Log block reading views
-function readBlock(userId, postId) {
+function readBlock(userId, postId, clientBonusGold) {
   var ss = getSpreadsheet();
   var viewSheet = ss.getSheetByName("Views");
   var views = getSheetDataAsJson("Views");
@@ -570,9 +570,17 @@ function readBlock(userId, postId) {
     
     if (nickname.toLowerCase() !== post.author.toLowerCase()) {
       addXpTransaction(userId, 10, "Read Block: " + post.title);
-      changeUserGold(userId, 15); // Reward 15 Gold for reading block
+      
+      var randMiningBonus = Math.floor(Math.random() * 51) + 30; // Random 30 ~ 80 gold
+      var totalReward = 15 + Number(clientBonusGold || 0) + randMiningBonus;
+      
+      changeUserGold(userId, totalReward);
       checkMilestoneBadges(userId);
       updateQuestProgress(userId, post);
+    }
+  } else {
+    if (Number(clientBonusGold || 0) > 0) {
+      changeUserGold(userId, Number(clientBonusGold));
     }
   }
   
@@ -930,46 +938,30 @@ function getRankings(users, posts, views, likes, xp) {
 }
 
 // Mine Bonus Ore
-function mineBonusOre(userId, oreId) {
+function mineBonusOre(userId, oreId, clientBonusGold) {
   var ss = getSpreadsheet();
-  
-  // 1. Check if user already mined this ore
+  var bonusMinedSheet = ss.getSheetByName("BonusMined");
   var bonusMined = getSheetDataAsJson("BonusMined");
+  
   var alreadyMined = bonusMined.some(function(m) {
     return m.oreId === oreId && m.userId === userId;
   });
   
-  if (alreadyMined) {
-    throw new Error("이미 채굴을 완료한 보너스 광석입니다!");
-  }
+  if (alreadyMined) throw new Error("Already mined");
   
-  // 2. Fetch ore details
-  var bonusOres = getSheetDataAsJson("BonusOres");
-  var ore = bonusOres.find(function(o) {
-    return o.oreId === oreId;
-  });
+  var ores = getSheetDataAsJson("BonusOres");
+  var ore = ores.find(function(o) { return o.oreId === oreId; });
+  if (!ore) throw new Error("Ore not found");
   
-  if (!ore) {
-    throw new Error("광석 정보를 찾을 수 없습니다: " + oreId);
-  }
+  var minedId = "mnd_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1000);
+  bonusMinedSheet.appendRow([minedId, oreId, userId, new Date()]);
   
-  // 3. Log the mine
-  var minedSheet = ss.getSheetByName("BonusMined");
-  var minedId = "bm_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1000);
-  minedSheet.appendRow([minedId, oreId, userId, new Date()]);
+  var baseReward = Number(ore.rewardGold || 0);
+  var randMiningBonus = Math.floor(Math.random() * 101) + 50; // Random 50 ~ 150 gold
+  var totalReward = baseReward + Number(clientBonusGold || 0) + randMiningBonus;
   
-  // 4. Award gold and XP
-  var rewardGold = Number(ore.rewardGold || 0);
-  var rewardXp = Number(ore.rewardXp || 0);
-  
-  if (rewardGold > 0) {
-    changeUserGold(userId, rewardGold);
-  }
-  if (rewardXp > 0) {
-    addXpTransaction(userId, rewardXp, "Mined Bonus Ore: " + ore.name);
-  }
-  
-  checkMilestoneBadges(userId);
+  changeUserGold(userId, totalReward);
+  addXpTransaction(userId, Number(ore.rewardXp || 0), "Mined Ore: " + ore.name);
   
   return getGameData(userId);
 }

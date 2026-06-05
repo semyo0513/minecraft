@@ -17,7 +17,8 @@ const state = {
   recommendedPost: null,
   recommendedShown: false,
   postHp: {}, // postId -> { hp, maxHp }
-  bonusOresHp: {} // oreId -> { hp, maxHp }
+  bonusOresHp: {}, // oreId -> { hp, maxHp }
+  tempBonusGold: {} // blockId -> accumulated hit bonus gold
 };
 
 // Canvas Engine Configuration
@@ -735,8 +736,11 @@ function openBlockDetail(postId) {
   renderCommentsList(postId);
   openModal('modal-block-detail');
   
+  const bonusToSend = state.tempBonusGold[postId] || 0;
+  delete state.tempBonusGold[postId];
+
   // Record view logic
-  callApi('readBlock', { userId: state.user.userId, postId: postId })
+  callApi('readBlock', { userId: state.user.userId, postId: postId, bonusGold: bonusToSend })
     .then((gameData) => {
       // Awarded Gold! Bouncing text
       const prevGold = state.gold;
@@ -902,6 +906,15 @@ function mineOreBlock(blockId, isBonus = false) {
   player.swingAngle = -Math.PI / 4;
   player.swingTimer = 8; // duration of animation
 
+  // Random hit gold bonus (30% chance to earn 1~3 gold on each hit)
+  let hitBonusGold = 0;
+  if (Math.random() < 0.3) {
+    hitBonusGold = Math.floor(Math.random() * 3) + 1; // 1~3 Gold
+    state.tempBonusGold[blockId] = (state.tempBonusGold[blockId] || 0) + hitBonusGold;
+    state.gold += hitBonusGold;
+    updateHUD();
+  }
+
   if (isBonus) {
     const ore = (state.bonusOres || []).find(item => item.oreId === blockId);
     if (!ore) return;
@@ -920,7 +933,13 @@ function mineOreBlock(blockId, isBonus = false) {
     const coords = getEntityWorldCoords(ore, 'bonus_ore');
     spawnHitParticles(coords.x + TILE_SIZE/2, coords.y + TILE_SIZE/2, pColor);
     spawnFloatingText(coords.x + TILE_SIZE/2, coords.y - 12, `-${equipped.power} HP`, "#fca5a5");
-    spawnFloatingText(coords.x + TILE_SIZE/2 + (Math.random() - 0.5) * 20, coords.y - 25, `+${equipped.power * 2}🪙`, "#ffd700");
+    
+    // Show hit gold pop-up
+    if (hitBonusGold > 0) {
+      spawnFloatingText(coords.x + TILE_SIZE/2 + (Math.random() - 0.5) * 24, coords.y - 25, `+${hitBonusGold} G 🪙`, "#ffd700");
+    } else {
+      spawnFloatingText(coords.x + TILE_SIZE/2 + (Math.random() - 0.5) * 20, coords.y - 25, `+${equipped.power * 2}🪙`, "#ffd700");
+    }
     triggerCameraShake(6, 4);
     
     if (blockData.hp <= 0) {
@@ -928,7 +947,10 @@ function mineOreBlock(blockId, isBonus = false) {
       spawnShatterParticles(coords.x + TILE_SIZE/2, coords.y + TILE_SIZE/2, pColor);
       triggerCameraShake(14, 8);
       
-      callApi('mineBonusOre', { userId: state.user.userId, oreId: blockId })
+      const bonusToSend = state.tempBonusGold[blockId] || 0;
+      delete state.tempBonusGold[blockId];
+      
+      callApi('mineBonusOre', { userId: state.user.userId, oreId: blockId, bonusGold: bonusToSend })
         .then((gameData) => {
           const prevGold = state.gold;
           const goldDiff = gameData.gold - prevGold;
@@ -953,7 +975,13 @@ function mineOreBlock(blockId, isBonus = false) {
     const coords = getEntityWorldCoords(p, 'post');
     spawnHitParticles(coords.x + TILE_SIZE/2, coords.y + TILE_SIZE/2, blockColor);
     spawnFloatingText(coords.x + TILE_SIZE/2, coords.y - 12, `-${equipped.power} HP`, "#fca5a5");
-    spawnFloatingText(coords.x + TILE_SIZE/2 + (Math.random() - 0.5) * 20, coords.y - 25, `Hit! 💥`, "#ffffff");
+    
+    // Show hit gold pop-up or normal effect
+    if (hitBonusGold > 0) {
+      spawnFloatingText(coords.x + TILE_SIZE/2 + (Math.random() - 0.5) * 24, coords.y - 25, `+${hitBonusGold} G 🪙`, "#ffd700");
+    } else {
+      spawnFloatingText(coords.x + TILE_SIZE/2 + (Math.random() - 0.5) * 20, coords.y - 25, `Hit! 💥`, "#ffffff");
+    }
     triggerCameraShake(6, 4);
     
     if (blockData.hp <= 0) {
