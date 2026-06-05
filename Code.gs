@@ -60,6 +60,9 @@ function doGet(e) {
     else if (action === 'buyPickaxe') {
       result = buyPickaxe(e.parameter.userId, e.parameter.pickaxeTier, Number(e.parameter.cost));
     }
+    else if (action === 'mineBonusOre') {
+      result = mineBonusOre(e.parameter.userId, e.parameter.oreId);
+    }
     else {
       throw new Error("Invalid action: " + action);
     }
@@ -139,7 +142,9 @@ function initDatabase() {
     "XP": ["xpId", "userId", "xpChange", "reason", "timestamp"],
     "Badges": ["badgeId", "userId", "badgeType", "date"],
     "Quests": ["questId", "userId", "questType", "status", "progress", "completedDate"],
-    "Settings": ["key", "value"]
+    "Settings": ["key", "value"],
+    "BonusOres": ["oreId", "name", "x", "y", "hp", "rewardGold", "rewardXp", "category"],
+    "BonusMined": ["minedId", "oreId", "userId", "minedDate"]
   };
   
   for (var sheetName in sheetsConfig) {
@@ -156,22 +161,74 @@ function initDatabase() {
     }
   }
   
-  // Database Migration: check if gold column exists in Users
+  // Database Migration: check if gold column exists in Users and correct any invalid data
   var userSheet = ss.getSheetByName("Users");
-  if (userSheet && userSheet.getLastColumn() < 4) {
-    userSheet.getRange(1, 4).setValue("gold");
-    userSheet.getRange(1, 4).setFontWeight("bold");
-    userSheet.getRange(1, 4).setBackground("#374151");
-    userSheet.getRange(1, 4).setFontColor("#ffffff");
+  if (userSheet) {
+    var lastCol = userSheet.getLastColumn();
+    var headers = [];
+    if (lastCol > 0) {
+      headers = userSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    }
+    var goldColIndex = headers.indexOf("gold");
     
-    var lastRow = userSheet.getLastRow();
-    if (lastRow > 1) {
-      var goldRange = userSheet.getRange(2, 4, lastRow - 1, 1);
-      var defaultGolds = [];
-      for (var i = 2; i <= lastRow; i++) {
-        defaultGolds.push([100]); // 100 default gold
+    if (goldColIndex === -1) {
+      var colPos = 4;
+      if (lastCol >= 4) {
+        var col4Header = userSheet.getRange(1, 4).getValue();
+        if (!col4Header || col4Header.toString().trim() === "") {
+          colPos = 4;
+        } else {
+          colPos = lastCol + 1;
+        }
       }
-      goldRange.setValues(defaultGolds);
+      userSheet.getRange(1, colPos).setValue("gold");
+      userSheet.getRange(1, colPos).setFontWeight("bold");
+      userSheet.getRange(1, colPos).setBackground("#374151");
+      userSheet.getRange(1, colPos).setFontColor("#ffffff");
+      
+      var lastRow = userSheet.getLastRow();
+      if (lastRow > 1) {
+        var goldRange = userSheet.getRange(2, colPos, lastRow - 1, 1);
+        var defaultGolds = [];
+        for (var i = 2; i <= lastRow; i++) {
+          defaultGolds.push([100]); // 100 default gold
+        }
+        goldRange.setValues(defaultGolds);
+      }
+    } else {
+      // Clean up empty, invalid, "NaN" or "undefined" cells defensively
+      var lastRow = userSheet.getLastRow();
+      if (lastRow > 1) {
+        var colPos = goldColIndex + 1;
+        var goldRange = userSheet.getRange(2, colPos, lastRow - 1, 1);
+        var vals = goldRange.getValues();
+        var updated = false;
+        for (var i = 0; i < vals.length; i++) {
+          var val = vals[i][0];
+          if (val === "" || val === null || val === undefined || isNaN(Number(val)) || val === "undefined" || val === "NaN") {
+            vals[i][0] = 100;
+            updated = true;
+          }
+        }
+        if (updated) {
+          goldRange.setValues(vals);
+        }
+      }
+    }
+  }
+  
+  // If BonusOres is newly created or empty, add default bonus ores
+  var bonusOresSheet = ss.getSheetByName("BonusOres");
+  if (bonusOresSheet && bonusOresSheet.getLastRow() <= 1) {
+    var defaultBonusOres = [
+      ["ore_1", "🪙 황금 광맥", "120", "20", "5", "200", "30", "Gold Vein"],
+      ["ore_2", "💎 다이아몬드 광맥", "220", "-10", "10", "500", "100", "Diamond Ore"],
+      ["ore_3", "🟢 에메랄드 원석", "350", "40", "6", "300", "50", "Emerald Ore"],
+      ["ore_4", "🔥 화산 루비 결정", "650", "-20", "8", "400", "80", "Ruby Crystal"],
+      ["ore_5", "⚡ 신비한 마법 광석", "850", "30", "12", "1000", "200", "Magic Ore"]
+    ];
+    for (var i = 0; i < defaultBonusOres.length; i++) {
+      bonusOresSheet.appendRow(defaultBonusOres[i]);
     }
   }
   
@@ -212,7 +269,12 @@ function getSheetDataAsJson(sheetName) {
 function getUserGold(userId) {
   var users = getSheetDataAsJson("Users");
   var user = users.find(function(u) { return u.userId === userId; });
-  return user ? Number(user.gold || 0) : 0;
+  if (!user) return 0;
+  var val = user.gold;
+  if (val === undefined || val === null || val === "" || isNaN(Number(val)) || val === "undefined" || val === "NaN") {
+    return 0;
+  }
+  return Number(val);
 }
 
 // Change user gold balance
@@ -231,7 +293,11 @@ function changeUserGold(userId, amount) {
   }
   
   if (foundRowIndex !== -1) {
-    var currentGold = Number(values[foundRowIndex - 1][3] || 0);
+    var rawVal = values[foundRowIndex - 1][3];
+    var currentGold = 0;
+    if (rawVal !== undefined && rawVal !== null && rawVal !== "" && !isNaN(Number(rawVal)) && rawVal !== "undefined" && rawVal !== "NaN") {
+      currentGold = Number(rawVal);
+    }
     sheet.getRange(foundRowIndex, 4).setValue(currentGold + amount);
   }
 }
@@ -339,7 +405,7 @@ function addPost(userId, category, author, title, summary, paragraph, imageUrl) 
     }
   }
   
-  var y = 0;
+  var y = Math.floor(Math.random() * 80) - 40; // Assign random Y depth on cavern floor!
   var postId = "post_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1000);
   var newPostRow = [
     postId, 
@@ -369,6 +435,8 @@ function getGameData(userId) {
   var comments = getSheetDataAsJson("Comments");
   var badges = getSheetDataAsJson("Badges");
   var quests = getSheetDataAsJson("Quests");
+  var bonusOres = getSheetDataAsJson("BonusOres");
+  var bonusMined = getSheetDataAsJson("BonusMined");
   
   var stats = getUserXpAndLevel(userId);
   var userBadges = badges.filter(function(b) { return b.userId === userId; }).map(function(b) { return b.badgeType; });
@@ -395,6 +463,23 @@ function getGameData(userId) {
     };
   });
   
+  var processedBonusOres = bonusOres.map(function(ore) {
+    var hasMined = bonusMined.some(function(m) {
+      return m.oreId === ore.oreId && m.userId === userId;
+    });
+    return {
+      oreId: ore.oreId,
+      name: ore.name,
+      x: Number(ore.x),
+      y: Number(ore.y),
+      hp: Number(ore.hp),
+      rewardGold: Number(ore.rewardGold),
+      rewardXp: Number(ore.rewardXp),
+      category: ore.category,
+      hasMined: hasMined
+    };
+  });
+  
   var recommendedPost = getDailyRecommendation(processedPosts);
   
   return {
@@ -403,6 +488,7 @@ function getGameData(userId) {
     level: stats.level,
     gold: getUserGold(userId),
     posts: processedPosts,
+    bonusOres: processedBonusOres,
     badges: userBadges,
     quests: userQuests,
     recommendedPost: recommendedPost
@@ -841,4 +927,49 @@ function getRankings(users, posts, views, likes, xp) {
     likes: likesRank.slice(0, 10),
     views: viewsRank.slice(0, 10)
   };
+}
+
+// Mine Bonus Ore
+function mineBonusOre(userId, oreId) {
+  var ss = getSpreadsheet();
+  
+  // 1. Check if user already mined this ore
+  var bonusMined = getSheetDataAsJson("BonusMined");
+  var alreadyMined = bonusMined.some(function(m) {
+    return m.oreId === oreId && m.userId === userId;
+  });
+  
+  if (alreadyMined) {
+    throw new Error("이미 채굴을 완료한 보너스 광석입니다!");
+  }
+  
+  // 2. Fetch ore details
+  var bonusOres = getSheetDataAsJson("BonusOres");
+  var ore = bonusOres.find(function(o) {
+    return o.oreId === oreId;
+  });
+  
+  if (!ore) {
+    throw new Error("광석 정보를 찾을 수 없습니다: " + oreId);
+  }
+  
+  // 3. Log the mine
+  var minedSheet = ss.getSheetByName("BonusMined");
+  var minedId = "bm_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1000);
+  minedSheet.appendRow([minedId, oreId, userId, new Date()]);
+  
+  // 4. Award gold and XP
+  var rewardGold = Number(ore.rewardGold || 0);
+  var rewardXp = Number(ore.rewardXp || 0);
+  
+  if (rewardGold > 0) {
+    changeUserGold(userId, rewardGold);
+  }
+  if (rewardXp > 0) {
+    addXpTransaction(userId, rewardXp, "Mined Bonus Ore: " + ore.name);
+  }
+  
+  checkMilestoneBadges(userId);
+  
+  return getGameData(userId);
 }

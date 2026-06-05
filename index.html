@@ -85,12 +85,17 @@
 
       <!-- Mobile D-Pad and Action Controllers -->
       <div id="mobile-controller">
-        <div class="d-pad">
-          <button id="btn-left" class="ctrl-btn">◀</button>
-          <button id="btn-right" class="ctrl-btn">▶</button>
+        <div class="d-pad-4way">
+          <button id="btn-up" class="ctrl-btn">▲</button>
+          <div class="d-pad-row">
+            <button id="btn-left" class="ctrl-btn">◀</button>
+            <button id="btn-right" class="ctrl-btn">▶</button>
+          </div>
+          <button id="btn-down" class="ctrl-btn">▼</button>
         </div>
-        <div class="action-pad">
+        <div class="action-pad" style="display:flex; flex-direction:column; gap:8px;">
           <button id="btn-action" class="ctrl-btn">F</button>
+          <button id="btn-jump" class="ctrl-btn" style="font-size:10px;">JUMP</button>
         </div>
       </div>
 

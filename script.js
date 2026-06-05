@@ -11,11 +11,13 @@ const state = {
   level: 1,
   gold: 100,
   posts: [],
+  bonusOres: [],
   badges: [],
   quests: [],
   recommendedPost: null,
   recommendedShown: false,
-  postHp: {} // postId -> { hp, maxHp }
+  postHp: {}, // postId -> { hp, maxHp }
+  bonusOresHp: {} // oreId -> { hp, maxHp }
 };
 
 // Canvas Engine Configuration
@@ -38,14 +40,16 @@ const pickaxes = {
 const player = {
   x: 100 * TILE_SIZE, // Start at Great Person Town
   y: 0,
+  z: 0,
   vx: 0,
   vy: 0,
+  vz: 0,
   width: 24,
   height: 44,
-  speed: 6,
-  jumpForce: -13,
-  gravity: 0.6,
-  grounded: false,
+  speed: 6.5,
+  jumpForce: -9, // Lower jump force on Z height for 2.5D jumping
+  gravity: 0.5,
+  grounded: true,
   direction: 1, // 1 = right, -1 = left
   animFrame: 0,
   animTimer: 0,
@@ -204,15 +208,31 @@ function initUI() {
   });
 
   // Mobile Controller Actions
+  const btnUp = document.getElementById('btn-up');
+  const btnDown = document.getElementById('btn-down');
   const btnLeft = document.getElementById('btn-left');
   const btnRight = document.getElementById('btn-right');
   const btnAction = document.getElementById('btn-action');
+  const btnJump = document.getElementById('btn-jump');
 
+  if (btnUp) {
+    btnUp.addEventListener('touchstart', (e) => { e.preventDefault(); keys['ArrowUp'] = true; });
+    btnUp.addEventListener('touchend', (e) => { e.preventDefault(); keys['ArrowUp'] = false; });
+  }
+  if (btnDown) {
+    btnDown.addEventListener('touchstart', (e) => { e.preventDefault(); keys['ArrowDown'] = true; });
+    btnDown.addEventListener('touchend', (e) => { e.preventDefault(); keys['ArrowDown'] = false; });
+  }
   btnLeft.addEventListener('touchstart', (e) => { e.preventDefault(); keys['ArrowLeft'] = true; });
   btnLeft.addEventListener('touchend', (e) => { e.preventDefault(); keys['ArrowLeft'] = false; });
   btnRight.addEventListener('touchstart', (e) => { e.preventDefault(); keys['ArrowRight'] = true; });
   btnRight.addEventListener('touchend', (e) => { e.preventDefault(); keys['ArrowRight'] = false; });
+  
   btnAction.addEventListener('touchstart', (e) => { e.preventDefault(); checkInteraction(); });
+  if (btnJump) {
+    btnJump.addEventListener('touchstart', (e) => { e.preventDefault(); keys['Space'] = true; });
+    btnJump.addEventListener('touchend', (e) => { e.preventDefault(); keys['Space'] = false; });
+  }
 
   if (!('ontouchstart' in window)) {
     document.getElementById('mobile-controller').classList.add('hidden');
@@ -257,6 +277,63 @@ function saveApiUrlSettings() {
     });
 }
 
+// Centralized State Updater
+function updateGameState(gameData) {
+  state.xp = gameData.xp;
+  state.level = gameData.level;
+  state.gold = gameData.gold || 0;
+  state.posts = gameData.posts || [];
+  state.bonusOres = gameData.bonusOres || [];
+  state.badges = gameData.badges || [];
+  state.quests = gameData.quests || [];
+  if (gameData.recommendedPost) {
+    state.recommendedPost = gameData.recommendedPost;
+  }
+  
+  // Sync HP for posts
+  (state.posts || []).forEach(p => {
+    if (!state.postHp[p.postId]) {
+      const isRare = ["Hero", "Migrant worker", "영웅", "이주노동자"].indexOf(p.category) !== -1;
+      const max = isRare ? 8 : 5;
+      state.postHp[p.postId] = { hp: max, maxHp: max };
+    }
+  });
+
+  // Sync HP for bonus ores
+  (state.bonusOres || []).forEach(ore => {
+    if (!state.bonusOresHp[ore.oreId]) {
+      state.bonusOresHp[ore.oreId] = { hp: ore.hp, maxHp: ore.hp };
+    }
+  });
+
+  updateHUD();
+}
+
+// Load spreadsheet database items
+function loadGameData() {
+  showScreen('screen-loading');
+  document.getElementById('loading-message').innerText = "마을 환경과 블록들을 로드하고 있습니다...";
+  
+  callApi('getGameData', { userId: state.user.userId })
+    .then((gameData) => {
+      updateGameState(gameData);
+      
+      // Trigger canvas resizing once game-screen becomes visible
+      showScreen('screen-game');
+      
+      // Center camera on player
+      resizeCanvas();
+      player.y = GROUND_Y; // Align player with cavern floor center!
+      camera.x = player.x - canvas.width / 2;
+      camera.x = Math.max(0, Math.min(camera.x, WORLD_WIDTH - canvas.width));
+      
+      startLoop();
+    })
+    .catch((err) => {
+      showScreen('screen-game');
+    });
+}
+
 function checkSession() {
   const storedUser = localStorage.getItem('mc_edu_user');
   if (storedUser) {
@@ -286,51 +363,6 @@ function handleLogin() {
     })
     .catch((err) => {
       showScreen('screen-login');
-    });
-}
-
-// Load spreadsheet database items
-function loadGameData() {
-  showScreen('screen-loading');
-  document.getElementById('loading-message').innerText = "마을 환경과 블록들을 로드하고 있습니다...";
-  
-  callApi('getGameData', { userId: state.user.userId })
-    .then((gameData) => {
-      state.xp = gameData.xp;
-      state.level = gameData.level;
-      state.gold = gameData.gold || 0;
-      state.posts = gameData.posts;
-      state.badges = gameData.badges;
-      state.quests = gameData.quests;
-      state.recommendedPost = gameData.recommendedPost;
-      
-      // Initialize block HP if uninitialized
-      (state.posts || []).forEach(p => {
-        if (!state.postHp[p.postId]) {
-          // Normal category = 5 hits, Rare (Hero / Migrant worker) = 8 hits
-          const isRare = ["Hero", "Migrant worker", "영웅", "이주노동자"].indexOf(p.category) !== -1;
-          const max = isRare ? 8 : 5;
-          state.postHp[p.postId] = { hp: max, maxHp: max };
-        }
-      });
-      
-      updateHUD();
-      showScreen('screen-game');
-      resizeCanvas(); // Trigger resizing after showing container to ensure correct sizes!
-      
-      // Start Game loop
-      if (!gameLoopId) {
-        player.y = GROUND_Y - player.height;
-        gameLoopId = requestAnimationFrame(gameLoop);
-      }
-      
-      if (state.recommendedPost && !state.recommendedShown) {
-        state.recommendedShown = true;
-        setTimeout(showRecommendationCard, 800);
-      }
-    })
-    .catch((err) => {
-      console.error(err);
     });
 }
 
@@ -438,14 +470,7 @@ function buyPickaxe(tier, cost) {
   
   callApi('buyPickaxe', { userId: state.user.userId, pickaxeTier: tier, cost: cost })
     .then((gameData) => {
-      state.xp = gameData.xp;
-      state.level = gameData.level;
-      state.gold = gameData.gold;
-      state.posts = gameData.posts;
-      state.badges = gameData.badges;
-      state.quests = gameData.quests;
-      
-      updateHUD();
+      updateGameState(gameData);
       showScreen('screen-game');
       alert(`${pickaxes[tier].name} 구매 완료! 장착되었습니다.`);
     })
@@ -496,27 +521,12 @@ function submitPost() {
     document.getElementById('form-summary').value = '';
     document.getElementById('form-paragraph').value = '';
     
-    state.xp = gameData.xp;
-    state.level = gameData.level;
-    state.gold = gameData.gold;
-    state.posts = gameData.posts;
-    state.badges = gameData.badges;
-    state.quests = gameData.quests;
-    
-    // Auto sync HP
-    (state.posts || []).forEach(p => {
-      if (!state.postHp[p.postId]) {
-        const isRare = ["Hero", "Migrant worker", "영웅", "이주노동자"].indexOf(p.category) !== -1;
-        const max = isRare ? 8 : 5;
-        state.postHp[p.postId] = { hp: max, maxHp: max };
-      }
-    });
+    updateGameState(gameData);
     
     // Spawn floating text for Gold
     spawnFloatingText(player.x, player.y - 40, "+50 Gold", "#ffd700");
     spawnFloatingText(player.x, player.y - 20, "+5 XP", "#55ff55");
     
-    updateHUD();
     showScreen('screen-game');
   })
   .catch((err) => {
@@ -606,13 +616,7 @@ function openBlockDetail(postId) {
         spawnFloatingText(player.x, player.y - 20, "+10 XP", "#55ff55");
       }
       
-      state.xp = gameData.xp;
-      state.level = gameData.level;
-      state.gold = gameData.gold;
-      state.posts = gameData.posts;
-      state.badges = gameData.badges;
-      state.quests = gameData.quests;
-      updateHUD();
+      updateGameState(gameData);
       
       if (selectedPostId === postId) {
         const updatedPost = gameData.posts.find(item => item.postId === postId);
@@ -673,17 +677,10 @@ function submitComment() {
     const goldDiff = gameData.gold - prevGold;
     if (goldDiff > 0) {
       spawnFloatingText(player.x, player.y - 40, `+${goldDiff} Gold`, "#ffd700");
-      spawnFloatingText(player.x, player.y - 20, "+5 XP", "#55ff55");
+      spawnFloatingText(player.x, player.y - 20, `+5 XP`, "#55ff55");
     }
     
-    state.xp = gameData.xp;
-    state.level = gameData.level;
-    state.gold = gameData.gold;
-    state.posts = gameData.posts;
-    state.badges = gameData.badges;
-    state.quests = gameData.quests;
-    
-    updateHUD();
+    updateGameState(gameData);
     renderCommentsList(selectedPostId);
   });
 }
@@ -697,17 +694,10 @@ function handleLikeToggle() {
       const goldDiff = gameData.gold - prevGold;
       if (goldDiff > 0) {
         spawnFloatingText(player.x, player.y - 40, `+${goldDiff} Gold`, "#ffd700");
-        spawnFloatingText(player.x, player.y - 20, "+2 XP", "#55ff55");
+        spawnFloatingText(player.x, player.y - 20, `+2 XP`, "#55ff55");
       }
       
-      state.xp = gameData.xp;
-      state.level = gameData.level;
-      state.gold = gameData.gold;
-      state.posts = gameData.posts;
-      state.badges = gameData.badges;
-      state.quests = gameData.quests;
-      
-      updateHUD();
+      updateGameState(gameData);
       
       const updatedPost = gameData.posts.find(item => item.postId === selectedPostId);
       if (updatedPost) {
@@ -760,14 +750,7 @@ function openNpcDialogue(npc) {
           if (goldDiff > 0) {
             spawnFloatingText(player.x, player.y - 40, `+${goldDiff} Gold`, "#ffd700");
           }
-          
-          state.xp = gameData.xp;
-          state.level = gameData.level;
-          state.gold = gameData.gold;
-          state.posts = gameData.posts;
-          state.badges = gameData.badges;
-          state.quests = gameData.quests;
-          updateHUD();
+          updateGameState(gameData);
           setTimeout(() => openNpcDialogue(npc), 300);
         });
     } else {
@@ -781,46 +764,70 @@ function openNpcDialogue(npc) {
 }
 
 // Mine Ores (hit logic)
-function mineOreBlock(postId) {
-  const p = (state.posts || []).find(item => item.postId === postId);
-  if (!p) return;
-  
+function mineOreBlock(blockId, isBonus = false) {
   const equipped = getEquippedPickaxe();
   
   // Set swing animation state
   player.isSwinging = true;
   player.swingAngle = -Math.PI / 4;
   player.swingTimer = 8; // duration of animation
-  
-  // Reduce HP
-  const blockData = state.postHp[postId];
-  blockData.hp -= equipped.power;
-  
-  // Shake block visuals locally using helper attributes
-  p.shakeTime = 6;
-  
-  // Emit Stone Chips
-  const blockColor = ["Hero", "Volunteer", "Independence fighter", "Educator", "Community contributor", "영웅", "봉사자", "독립운동가", "교육자", "지역사회 공헌 인물"].indexOf(p.category) !== -1 ? "#06b6d4" : "#ef4444";
-  spawnHitParticles(p.x * TILE_SIZE + 24, GROUND_Y - 24, blockColor);
-  
-  // Spawn Damage Text
-  spawnFloatingText(p.x * TILE_SIZE + 24, GROUND_Y - 48, `-${equipped.power} HP`, "#fca5a5");
-  
-  // Trigger light Camera shake
-  triggerCameraShake(4, 2);
-  
-  if (blockData.hp <= 0) {
-    // Shattered!
-    blockData.hp = 0;
+
+  if (isBonus) {
+    const ore = (state.bonusOres || []).find(item => item.oreId === blockId);
+    if (!ore) return;
     
-    // Large Sparkles
-    spawnShatterParticles(p.x * TILE_SIZE + 24, GROUND_Y - 24, blockColor);
+    const blockData = state.bonusOresHp[blockId];
+    blockData.hp -= equipped.power;
+    ore.shakeTime = 6;
     
-    // Screen shake
-    triggerCameraShake(12, 6);
+    // Choose particle color
+    let pColor = "#fdb813"; // gold
+    if (ore.name.includes("다이아몬드")) pColor = "#4dedf5";
+    else if (ore.name.includes("에메랄드")) pColor = "#22c55e";
+    else if (ore.name.includes("루비")) pColor = "#ef4444";
+    else if (ore.name.includes("마법")) pColor = "#a78bfa";
     
-    // Open reading detail panel
-    openBlockDetail(postId);
+    spawnHitParticles(ore.x * TILE_SIZE + 24, GROUND_Y + ore.y + 24, pColor);
+    spawnFloatingText(ore.x * TILE_SIZE + 24, GROUND_Y + ore.y - 12, `-${equipped.power} HP`, "#fca5a5");
+    triggerCameraShake(4, 2);
+    
+    if (blockData.hp <= 0) {
+      blockData.hp = 0;
+      spawnShatterParticles(ore.x * TILE_SIZE + 24, GROUND_Y + ore.y + 24, pColor);
+      triggerCameraShake(12, 6);
+      
+      callApi('mineBonusOre', { userId: state.user.userId, oreId: blockId })
+        .then((gameData) => {
+          const prevGold = state.gold;
+          const goldDiff = gameData.gold - prevGold;
+          if (goldDiff > 0) {
+            spawnFloatingText(player.x, player.y - 40, `+${goldDiff} Gold`, "#ffd700");
+            spawnFloatingText(player.x, player.y - 20, `+${ore.rewardXp} XP`, "#55ff55");
+          }
+          updateGameState(gameData);
+        });
+    }
+  } else {
+    const p = (state.posts || []).find(item => item.postId === blockId);
+    if (!p) return;
+    
+    const blockData = state.postHp[blockId];
+    blockData.hp -= equipped.power;
+    p.shakeTime = 6;
+    
+    const isGreat = ["Hero", "Volunteer", "Independence fighter", "Educator", "Community contributor", "영웅", "봉사자", "독립운동가", "교육자", "지역사회 공헌 인물"].indexOf(p.category) !== -1;
+    const blockColor = isGreat ? "#06b6d4" : "#ef4444";
+    
+    spawnHitParticles(p.x * TILE_SIZE + 24, GROUND_Y + p.y + 24, blockColor);
+    spawnFloatingText(p.x * TILE_SIZE + 24, GROUND_Y + p.y - 12, `-${equipped.power} HP`, "#fca5a5");
+    triggerCameraShake(4, 2);
+    
+    if (blockData.hp <= 0) {
+      blockData.hp = 0;
+      spawnShatterParticles(p.x * TILE_SIZE + 24, GROUND_Y + p.y + 24, blockColor);
+      triggerCameraShake(12, 6);
+      openBlockDetail(blockId);
+    }
   }
 }
 
@@ -829,30 +836,55 @@ function checkInteraction() {
   for (const npc of npcs) {
     const npcX = npc.unitX * TILE_SIZE;
     const distance = Math.abs(player.x - npcX);
-    if (distance < 50) {
+    const npcYDepth = (npc.unitX % 3) * 15 - 10;
+    const dy = Math.abs(player.y - (GROUND_Y + npcYDepth));
+    if (distance < 50 && dy < 40) {
       openNpcDialogue(npc);
       return;
     }
   }
   
-  // Check Blocks collision
+  // Check Blocks and Bonus Ores collision
   let closestBlock = null;
-  let minDist = 60;
-  for (const p of (state.posts || [])) {
-    const blockX = p.x * TILE_SIZE;
-    const distance = Math.abs(player.x - blockX);
-    if (distance < minDist) {
-      closestBlock = p;
-      minDist = distance;
+  let minDist = 70;
+  
+  // Check student blocks
+  (state.posts || []).forEach(p => {
+    const bx = p.x * TILE_SIZE + 24;
+    const by = GROUND_Y + p.y + 24;
+    const dist = Math.sqrt(Math.pow((player.x + 12) - bx, 2) + Math.pow(player.y - by, 2));
+    if (dist < minDist) {
+      closestBlock = { type: 'post', id: p.postId, data: p };
+      minDist = dist;
     }
-  }
+  });
+  
+  // Check bonus ores
+  (state.bonusOres || []).forEach(ore => {
+    const bx = ore.x * TILE_SIZE + 24;
+    const by = GROUND_Y + ore.y + 24;
+    const dist = Math.sqrt(Math.pow((player.x + 12) - bx, 2) + Math.pow(player.y - by, 2));
+    if (dist < minDist) {
+      closestBlock = { type: 'bonus_ore', id: ore.oreId, data: ore };
+      minDist = dist;
+    }
+  });
   
   if (closestBlock) {
-    const isMined = state.postHp[closestBlock.postId] && state.postHp[closestBlock.postId].hp <= 0;
-    if (isMined) {
-      openBlockDetail(closestBlock.postId);
+    if (closestBlock.type === 'post') {
+      const isMined = state.postHp[closestBlock.id] && state.postHp[closestBlock.id].hp <= 0;
+      if (isMined) {
+        openBlockDetail(closestBlock.id);
+      } else {
+        mineOreBlock(closestBlock.id, false);
+      }
     } else {
-      mineOreBlock(closestBlock.postId);
+      const oreData = closestBlock.data;
+      if (!oreData.hasMined) {
+        mineOreBlock(closestBlock.id, true);
+      } else {
+        spawnFloatingText(player.x, player.y - 40, "이미 채굴된 보너스 원석!", "#ff5555");
+      }
     }
   }
 }
@@ -861,32 +893,49 @@ function checkInteraction() {
 function handleCanvasClick(e) {
   const rect = canvas.getBoundingClientRect();
   const clickX = e.clientX - rect.left + camera.x;
+  const clickY = e.clientY - rect.top;
   
   // Check if click was on NPC
   for (const npc of npcs) {
     const npcX = npc.unitX * TILE_SIZE;
-    const npcY = GROUND_Y - 48;
-    if (clickX >= npcX - 16 && clickX <= npcX + 32 && e.clientY - rect.top >= npcY && e.clientY - rect.top <= GROUND_Y) {
+    const npcYDepth = (npc.unitX % 3) * 15 - 10;
+    const npcY = GROUND_Y + npcYDepth;
+    if (clickX >= npcX - 16 && clickX <= npcX + 32 && clickY >= npcY && clickY <= npcY + 48) {
       openNpcDialogue(npc);
       return;
     }
   }
   
-  // Check if click was on block
+  // Check if click was on student block
   for (const p of (state.posts || [])) {
-    const blockX = p.x * TILE_SIZE;
-    const blockY = GROUND_Y - 48;
-    if (clickX >= blockX && clickX <= blockX + 48 && e.clientY - rect.top >= blockY && e.clientY - rect.top <= GROUND_Y) {
-      const isMined = state.postHp[p.postId] && state.postHp[p.postId].hp <= 0;
-      
-      // Face direction of click
-      if (blockX > player.x) player.direction = 1;
+    const bx = p.x * TILE_SIZE;
+    const by = GROUND_Y + p.y;
+    if (clickX >= bx && clickX <= bx + 48 && clickY >= by && clickY <= by + 48) {
+      if (bx > player.x) player.direction = 1;
       else player.direction = -1;
       
+      const isMined = state.postHp[p.postId] && state.postHp[p.postId].hp <= 0;
       if (isMined) {
         openBlockDetail(p.postId);
       } else {
-        mineOreBlock(p.postId);
+        mineOreBlock(p.postId, false);
+      }
+      return;
+    }
+  }
+
+  // Check if click was on bonus ore
+  for (const ore of (state.bonusOres || [])) {
+    const bx = ore.x * TILE_SIZE;
+    const by = GROUND_Y + ore.y;
+    if (clickX >= bx && clickX <= bx + 48 && clickY >= by && clickY <= by + 48) {
+      if (bx > player.x) player.direction = 1;
+      else player.direction = -1;
+      
+      if (!ore.hasMined) {
+        mineOreBlock(ore.oreId, true);
+      } else {
+        spawnFloatingText(player.x, player.y - 40, "이미 채굴된 원석!", "#ff5555");
       }
       return;
     }
@@ -999,6 +1048,7 @@ let gameLoopId = null;
 function updatePhysics() {
   player.isMoving = false;
   
+  // Horizontal movement (X-axis)
   if (keys['ArrowLeft'] || keys['KeyA']) {
     player.vx = -player.speed;
     player.direction = -1;
@@ -1012,15 +1062,30 @@ function updatePhysics() {
     if (Math.abs(player.vx) < 0.1) player.vx = 0;
   }
   
-  if ((keys['Space'] || keys['ArrowUp'] || keys['KeyW']) && player.grounded) {
-    player.vy = player.jumpForce;
+  // Depth movement (Y-axis for 2.5D top-down)
+  if (keys['ArrowUp'] || keys['KeyW']) {
+    player.vy = -player.speed * 0.7; // Walk slightly slower vertically to enhance visual depth
+    player.isMoving = true;
+  } else if (keys['ArrowDown'] || keys['KeyS']) {
+    player.vy = player.speed * 0.7;
+    player.isMoving = true;
+  } else {
+    player.vy *= 0.7;
+    if (Math.abs(player.vy) < 0.1) player.vy = 0;
+  }
+  
+  // Jump Height movement (Z-axis)
+  if (keys['Space'] && player.z === 0) {
+    player.vz = player.jumpForce;
     player.grounded = false;
   }
   
-  player.vy += player.gravity;
+  player.vz += player.gravity;
   player.x += player.vx;
   player.y += player.vy;
+  player.z += player.vz;
   
+  // Clamp boundaries on X axis
   if (player.x < 0) {
     player.x = 0;
     player.vx = 0;
@@ -1030,12 +1095,26 @@ function updatePhysics() {
     player.vx = 0;
   }
   
-  if (player.y > GROUND_Y - player.height) {
-    player.y = GROUND_Y - player.height;
+  // Clamp boundaries on Y depth axis (cavern floor strip)
+  const FLOOR_TOP = GROUND_Y - 50;
+  const FLOOR_BOTTOM = GROUND_Y + 50;
+  if (player.y < FLOOR_TOP) {
+    player.y = FLOOR_TOP;
     player.vy = 0;
+  }
+  if (player.y > FLOOR_BOTTOM) {
+    player.y = FLOOR_BOTTOM;
+    player.vy = 0;
+  }
+  
+  // Clamp Z height (floor level)
+  if (player.z > 0) {
+    player.z = 0;
+    player.vz = 0;
     player.grounded = true;
   }
   
+  // Camera smooth horizontal follow
   const targetCamX = player.x - canvas.width / 2;
   camera.x += (targetCamX - camera.x) * camera.lerpSpeed;
   camera.x = Math.max(0, Math.min(camera.x, WORLD_WIDTH - canvas.width));
@@ -1050,7 +1129,8 @@ function updatePhysics() {
     camera.shakeY = 0;
   }
   
-  if (player.isMoving && player.grounded) {
+  // Walk animations
+  if (player.isMoving && player.z === 0) {
     player.animTimer++;
     if (player.animTimer > 8) {
       player.animFrame = (player.animFrame + 1) % 4;
@@ -1063,7 +1143,6 @@ function updatePhysics() {
   // Pickaxe swing animation timer
   if (player.isSwinging) {
     player.swingTimer--;
-    // Rotate pickaxe forward
     player.swingAngle += Math.PI / 10;
     if (player.swingTimer <= 0) {
       player.isSwinging = false;
@@ -1073,45 +1152,163 @@ function updatePhysics() {
   
   // Block shaking timer reduction
   (state.posts || []).forEach(p => {
-    if (p.shakeTime && p.shakeTime > 0) {
-      p.shakeTime--;
-    }
+    if (p.shakeTime && p.shakeTime > 0) p.shakeTime--;
+  });
+  (state.bonusOres || []).forEach(o => {
+    if (o.shakeTime && o.shakeTime > 0) o.shakeTime--;
   });
   
   updateJuice();
 }
 
+function draw3DCube(x, y, w, h, d, faceColor, topColor, sideColor, cracksRatio, hasMined, isGreat, name, labelText) {
+  if (hasMined) {
+    const coreColor = isGreat ? "var(--mc-diamond)" : "var(--mc-red)";
+    if (faceColor === "#5d4a13") {
+      ctx.fillStyle = "rgba(253, 184, 19, 0.15)";
+    } else {
+      ctx.fillStyle = isGreat ? "rgba(34, 211, 238, 0.15)" : "rgba(239, 68, 68, 0.15)";
+    }
+    
+    ctx.beginPath();
+    ctx.arc(x + w/2, y + h/2, 24, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.fillStyle = (faceColor === "#5d4a13") ? "var(--mc-gold)" : coreColor;
+    ctx.beginPath();
+    ctx.moveTo(x + w/2, y + 8);
+    ctx.lineTo(x + w - 10, y + h/2);
+    ctx.lineTo(x + w/2, y + h - 8);
+    ctx.lineTo(x + 10, y + h/2);
+    ctx.closePath();
+    ctx.fill();
+    
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    
+    ctx.fillStyle = "#fff";
+    if (Math.random() < 0.1) {
+      ctx.fillRect(x + 12 + Math.random() * 24, y + 12 + Math.random() * 24, 3, 3);
+    }
+  } else {
+    // 1. Top Face
+    ctx.fillStyle = topColor;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + d, y - d);
+    ctx.lineTo(x + w + d, y - d);
+    ctx.lineTo(x + w, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    
+    // 2. Right Side Face
+    ctx.fillStyle = sideColor;
+    ctx.beginPath();
+    ctx.moveTo(x + w, y);
+    ctx.lineTo(x + w + d, y - d);
+    ctx.lineTo(x + w + d, y + h - d);
+    ctx.lineTo(x + w, y + h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    
+    // 3. Front Face
+    ctx.fillStyle = faceColor;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    
+    // Glowing gems
+    ctx.fillStyle = isGreat ? "var(--mc-diamond)" : "var(--mc-red)";
+    if (faceColor === "#5d4a13") ctx.fillStyle = "var(--mc-gold)";
+    else if (faceColor === "#0d3a1b") ctx.fillStyle = "#22c55e";
+    else if (faceColor === "#2e1065") ctx.fillStyle = "#a78bfa";
+    
+    ctx.fillRect(x + 10, y + 12, 8, 8);
+    ctx.fillRect(x + 28, y + 26, 10, 10);
+    ctx.fillRect(x + 14, y + 32, 6, 6);
+    
+    // Cracks
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.75)";
+    ctx.lineWidth = 3.5;
+    if (cracksRatio <= 0.8 && cracksRatio > 0.5) {
+      ctx.beginPath();
+      ctx.moveTo(x + 4, y + 4);
+      ctx.lineTo(x + 20, y + 20);
+      ctx.stroke();
+    } else if (cracksRatio <= 0.5 && cracksRatio > 0.25) {
+      ctx.beginPath();
+      ctx.moveTo(x + 4, y + 4);
+      ctx.lineTo(x + 20, y + 20);
+      ctx.moveTo(x + 44, y + 6);
+      ctx.lineTo(x + 28, y + 28);
+      ctx.stroke();
+    } else if (cracksRatio <= 0.25) {
+      ctx.beginPath();
+      ctx.moveTo(x + 4, y + 4);
+      ctx.lineTo(x + 24, y + 24);
+      ctx.lineTo(x + 8, y + 44);
+      ctx.moveTo(x + 44, y + 4);
+      ctx.lineTo(x + 24, y + 24);
+      ctx.stroke();
+    }
+    
+    // Health Bar
+    ctx.fillStyle = "#000";
+    ctx.fillRect(x + 4, y - 8, 40, 5);
+    const hpWidth = Math.floor(40 * cracksRatio);
+    ctx.fillStyle = (faceColor === "#5d4a13") ? "var(--mc-gold)" : (isGreat ? "var(--mc-diamond)" : "var(--mc-red)");
+    if (faceColor === "#0d3a1b") ctx.fillStyle = "#22c55e";
+    if (faceColor === "#2e1065") ctx.fillStyle = "#a78bfa";
+    ctx.fillRect(x + 4, y - 8, hpWidth, 5);
+  }
+  
+  // Label Card
+  ctx.fillStyle = "rgba(0,0,0,0.85)";
+  ctx.fillRect(x - 20, y - 36, 88, 24);
+  ctx.strokeStyle = hasMined ? "#55ff55" : (isGreat ? "var(--mc-diamond)" : "var(--mc-red)");
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x - 20, y - 36, 88, 24);
+  
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 8px var(--font-retro)";
+  ctx.textAlign = "center";
+  ctx.fillText(name, x + 24, y - 26);
+  
+  ctx.fillStyle = hasMined ? "#55ff55" : "#aaaaaa";
+  ctx.font = "6px var(--font-retro)";
+  ctx.fillText(labelText, x + 24, y - 16);
+}
+
 function drawGame() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   
-  // 1. Draw Cavern dark stone background walls
-  ctx.fillStyle = "#1e293b"; // Stone gray wall
-  ctx.fillRect(0, 0, canvas.width, GROUND_Y);
+  // 1. Cavern roof backgrounds wall
+  ctx.fillStyle = "#161b22";
+  ctx.fillRect(0, 0, canvas.width, GROUND_Y - 50);
   
-  // Cavern details parallax back-drawings
+  // Cavern detail crystals parallax back-drawings
   ctx.save();
-  ctx.translate(-camera.x * 0.3, 0); // Parallax factor
-  
-  // Neon luminous cavern crystals in the wall background
+  ctx.translate(-camera.x * 0.3, 0);
   for (let i = 0; i < 40; i++) {
     const cx = i * 800 + 100;
     const isGreatZone = cx < (500 * TILE_SIZE);
-    
-    // Cyan sapphire vs Ruby red glowing crystal backgrounds
-    ctx.fillStyle = isGreatZone ? "rgba(6, 182, 212, 0.15)" : "rgba(239, 68, 68, 0.15)";
-    ctx.fillRect(cx, 120, 48, 80);
-    ctx.fillRect(cx + 80, 240, 60, 40);
+    ctx.fillStyle = isGreatZone ? "rgba(6, 182, 212, 0.12)" : "rgba(239, 68, 68, 0.12)";
+    ctx.fillRect(cx, 80, 48, 80);
+    ctx.fillRect(cx + 80, 160, 60, 40);
   }
   ctx.restore();
   
-  // Apply camera translation with shake effects
+  // Apply camera translation
   ctx.save();
   ctx.translate(-camera.x + camera.shakeX, camera.shakeY);
   
-  // 2. Stalactites drawing on cave roof
-  ctx.fillStyle = "#0f172a"; // dark roof slate
+  // Stalactites
+  ctx.fillStyle = "#0f131a";
   ctx.fillRect(0, 0, WORLD_WIDTH, 20);
-  
   ctx.beginPath();
   for (let sx = 0; sx < WORLD_WIDTH; sx += 64) {
     ctx.moveTo(sx, 20);
@@ -1121,303 +1318,312 @@ function drawGame() {
   ctx.closePath();
   ctx.fill();
   
-  // 3. Town Biome separation divider line
+  // Cavern 3D Perspective Floor
+  const floorTop = GROUND_Y - 60;
+  const floorBottom = GROUND_Y + 60;
+  
+  // Render floor base
+  ctx.fillStyle = "#2d3540"; // Cave floor stone gray
+  ctx.fillRect(0, floorTop, WORLD_WIDTH, floorBottom - floorTop);
+  
+  // perspective guidelines
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
+  ctx.lineWidth = 2;
+  for (let fy = floorTop; fy <= floorBottom; fy += 20) {
+    ctx.beginPath();
+    ctx.moveTo(0, fy);
+    ctx.lineTo(WORLD_WIDTH, fy);
+    ctx.stroke();
+  }
+  for (let fx = 0; fx < WORLD_WIDTH; fx += 96) {
+    ctx.beginPath();
+    ctx.moveTo(fx, floorTop);
+    ctx.lineTo(fx + (fx - player.x) * 0.05, floorBottom);
+    ctx.stroke();
+  }
+  
+  // Town separation line
   const borderX = 500 * TILE_SIZE;
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.3)";
-  ctx.lineWidth = 8;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";
+  ctx.lineWidth = 12;
   ctx.beginPath();
-  ctx.moveTo(borderX, 0);
-  ctx.lineTo(borderX, GROUND_Y);
+  ctx.moveTo(borderX, floorTop);
+  ctx.lineTo(borderX, floorBottom);
   ctx.stroke();
   
   // Signboard
   ctx.fillStyle = "#4a3b32";
-  ctx.fillRect(borderX - 90, GROUND_Y - 120, 180, 40);
+  ctx.fillRect(borderX - 90, floorTop - 60, 180, 40);
   ctx.fillStyle = "#111";
-  ctx.fillRect(borderX - 90, GROUND_Y - 120, 180, 40);
+  ctx.fillRect(borderX - 90, floorTop - 60, 180, 40);
   ctx.strokeStyle = "#8b8b8b";
   ctx.lineWidth = 3;
-  ctx.strokeRect(borderX - 90, GROUND_Y - 120, 180, 40);
+  ctx.strokeRect(borderX - 90, floorTop - 60, 180, 40);
   
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 9px var(--font-retro)";
   ctx.textAlign = "center";
-  ctx.fillText("← 위대한 광산 | 소외된 광산 →", borderX, GROUND_Y - 100);
+  ctx.fillText("← 위대한 광산 | 소외된 광산 →", borderX, floorTop - 40);
   
   ctx.fillStyle = "#333";
-  ctx.fillRect(borderX - 8, GROUND_Y - 80, 16, 80);
+  ctx.fillRect(borderX - 8, floorTop - 20, 16, 20);
   
-  // 4. Ground Blocks (Cavern stone floor)
-  ctx.fillStyle = "#374151"; // grey stone floor
-  ctx.fillRect(0, GROUND_Y, WORLD_WIDTH, 14);
-  ctx.fillStyle = "#1f2937"; // deep stone bedrock
-  ctx.fillRect(0, GROUND_Y + 14, WORLD_WIDTH, 96 - 14);
+  // 2.5D Depth Sorting List
+  const drawables = [];
   
-  // Cavern floor brick grid details
-  ctx.fillStyle = "#111827";
-  for (let gx = 0; gx < WORLD_WIDTH; gx += 48) {
-    ctx.fillRect(gx, GROUND_Y, 2, 96);
-    ctx.fillRect(gx, GROUND_Y + 24, 48, 2);
-  }
-  
-  // 5. Draw NPCs
+  // Add NPCs
   npcs.forEach(npc => {
-    const npcX = npc.unitX * TILE_SIZE;
-    const npcY = GROUND_Y - 48;
-    
-    // Body
-    ctx.fillStyle = "#475569";
-    ctx.fillRect(npcX, npcY + 16, 32, 32);
-    ctx.strokeStyle = "#000";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(npcX, npcY + 16, 32, 32);
-    
-    // Head
-    ctx.fillStyle = "#e5c59e";
-    ctx.fillRect(npcX + 4, npcY, 24, 20);
-    ctx.strokeRect(npcX + 4, npcY, 24, 20);
-    
-    ctx.font = "16px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(npc.emoji, npcX + 16, npcY + 10);
-    
-    ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-    ctx.fillRect(npcX - 16, npcY - 32, 64, 16);
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "8px var(--font-retro)";
-    ctx.textAlign = "center";
-    ctx.fillText(npc.name.split(' ')[0], npcX + 16, npcY - 21);
-    
-    const quest = (state.quests || []).find(q => q.questType === npc.id);
-    const progress = quest ? Number(quest.progress) : 0;
-    const status = quest ? quest.status : "IN_PROGRESS";
-    
-    let target = 1;
-    if (npc.id === "READ_3") target = 3;
-    else if (npc.id === "LIKE_5") target = 5;
-    else if (npc.id === "COMMENT_2") target = 2;
-    
-    if (status === "COMPLETED") {
-      ctx.fillStyle = "#55ff55";
-      ctx.font = "bold 18px var(--font-retro)";
-      ctx.fillText("✔", npcX + 16, npcY - 42);
-    } else if (progress >= target) {
-      ctx.fillStyle = "#ffff55";
-      ctx.font = "bold 18px var(--font-retro)";
-      ctx.fillText("?", npcX + 16, npcY - 42);
-    } else {
-      ctx.fillStyle = "#ff5555";
-      ctx.font = "bold 18px var(--font-retro)";
-      ctx.fillText("!", npcX + 16, npcY - 42);
-    }
+    const npcYDepth = (npc.unitX % 3) * 20 - 20; // -20 to 20
+    drawables.push({
+      type: 'npc',
+      y: GROUND_Y + npcYDepth,
+      data: npc,
+      npcYDepth: npcYDepth
+    });
   });
   
-  // 6. Draw Block Posts (Mineable Ores)
+  // Add Posts (student blocks)
   (state.posts || []).forEach(p => {
-    const bx = p.x * TILE_SIZE;
-    const by = GROUND_Y - 48;
-    
-    const isGreat = ["Hero", "Volunteer", "Independence fighter", "Educator", "Community contributor",
-                     "영웅", "봉사자", "독립운동가", "교육자", "지역사회 공헌 인물"].indexOf(p.category) !== -1;
-                     
-    const blockData = state.postHp[p.postId] || { hp: 5, maxHp: 5 };
-    const isMined = blockData.hp <= 0;
-    
-    // Add offset for block shaking when hit
-    let shakeOffset = 0;
-    if (p.shakeTime && p.shakeTime > 0) {
-      shakeOffset = (p.shakeTime % 2 === 0 ? 1 : -1) * 4;
-    }
-    
-    if (isMined) {
-      // Draw a glowing Gem/Crystal core instead of the block (meaning it's already mined)
-      const coreColor = isGreat ? "var(--mc-diamond)" : "var(--mc-red)";
+    drawables.push({
+      type: 'post',
+      y: GROUND_Y + Number(p.y || 0),
+      data: p
+    });
+  });
+  
+  // Add Bonus Ores
+  (state.bonusOres || []).forEach(ore => {
+    drawables.push({
+      type: 'bonus_ore',
+      y: GROUND_Y + Number(ore.y || 0),
+      data: ore
+    });
+  });
+  
+  // Add Player
+  drawables.push({
+    type: 'player',
+    y: player.y,
+    data: player
+  });
+  
+  // Sort draw list by depth (Y coordinate)
+  drawables.sort((a, b) => a.y - b.y);
+  
+  // Render items in sorted order
+  drawables.forEach(item => {
+    if (item.type === 'npc') {
+      const npc = item.data;
+      const nx = npc.unitX * TILE_SIZE;
+      const ny = item.y - 48;
       
-      // Draw glowing background halo
-      ctx.fillStyle = isGreat ? "rgba(34, 211, 238, 0.15)" : "rgba(239, 68, 68, 0.15)";
+      // Shadow
+      ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
       ctx.beginPath();
-      ctx.arc(bx + 24, by + 24, 30, 0, Math.PI * 2);
+      ctx.ellipse(nx + 16, item.y, 16, 6, 0, 0, Math.PI * 2);
       ctx.fill();
       
-      // Draw gemstone diamond shape
-      ctx.fillStyle = coreColor;
-      ctx.beginPath();
-      ctx.moveTo(bx + 24, by + 8);
-      ctx.lineTo(bx + 38, by + 24);
-      ctx.lineTo(bx + 24, by + 40);
-      ctx.lineTo(bx + 10, by + 24);
-      ctx.closePath();
-      ctx.fill();
-      
+      // Body
+      ctx.fillStyle = "#475569";
+      ctx.fillRect(nx, ny + 16, 32, 32);
       ctx.strokeStyle = "#000";
       ctx.lineWidth = 3;
-      ctx.stroke();
+      ctx.strokeRect(nx, ny + 16, 32, 32);
       
-      // Sparkling sparkles indicators
-      ctx.fillStyle = "#fff";
-      if (Math.random() < 0.1) {
-        ctx.fillRect(bx + 12 + Math.random() * 24, by + 12 + Math.random() * 24, 3, 3);
-      }
-    } else {
-      // Draw full textured Ore block with shake offset
-      const blockColor = isGreat ? "#0b4e5b" : "#4c0505"; // dark sapphire vs dark ruby rocks
-      const gemColor = isGreat ? "var(--mc-diamond)" : "var(--mc-red)";
+      // Head
+      ctx.fillStyle = "#e5c59e";
+      ctx.fillRect(nx + 4, ny, 24, 20);
+      ctx.strokeRect(nx + 4, ny, 24, 20);
       
-      ctx.fillStyle = blockColor;
-      ctx.fillRect(bx + shakeOffset, by, 48, 48);
-      ctx.strokeStyle = "#000000";
-      ctx.lineWidth = 4;
-      ctx.strokeRect(bx + shakeOffset, by, 48, 48);
+      ctx.font = "16px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(npc.emoji, nx + 16, ny + 10);
       
-      // Draw embedded glowing gem nodes inside the block
-      ctx.fillStyle = gemColor;
-      ctx.fillRect(bx + 10 + shakeOffset, by + 10, 8, 8);
-      ctx.fillRect(bx + 28 + shakeOffset, by + 24, 10, 10);
-      ctx.fillRect(bx + 14 + shakeOffset, by + 30, 6, 6);
+      ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+      ctx.fillRect(nx - 16, ny - 32, 64, 16);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "8px var(--font-retro)";
+      ctx.textAlign = "center";
+      ctx.fillText(npc.name.split(' ')[0], nx + 16, ny - 21);
       
-      // Draw block cracks based on health/damage ratio
-      const ratio = blockData.hp / blockData.maxHp;
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.75)";
-      ctx.lineWidth = 3.5;
+      const quest = (state.quests || []).find(q => q.questType === npc.id);
+      const progress = quest ? Number(quest.progress) : 0;
+      const status = quest ? quest.status : "IN_PROGRESS";
       
-      if (ratio <= 0.8 && ratio > 0.5) {
-        // Light cracking
-        ctx.beginPath();
-        ctx.moveTo(bx + 4 + shakeOffset, by + 4);
-        ctx.lineTo(bx + 20 + shakeOffset, by + 20);
-        ctx.stroke();
-      } else if (ratio <= 0.5 && ratio > 0.25) {
-        // Medium cracking
-        ctx.beginPath();
-        ctx.moveTo(bx + 4 + shakeOffset, by + 4);
-        ctx.lineTo(bx + 20 + shakeOffset, by + 20);
-        ctx.moveTo(bx + 44 + shakeOffset, by + 6);
-        ctx.lineTo(bx + 28 + shakeOffset, by + 28);
-        ctx.stroke();
-      } else if (ratio <= 0.25) {
-        // Heavy cracking
-        ctx.beginPath();
-        ctx.moveTo(bx + 4 + shakeOffset, by + 4);
-        ctx.lineTo(bx + 24 + shakeOffset, by + 24);
-        ctx.lineTo(bx + 8 + shakeOffset, by + 44);
-        ctx.moveTo(bx + 44 + shakeOffset, by + 4);
-        ctx.lineTo(bx + 24 + shakeOffset, by + 24);
-        ctx.stroke();
+      let target = 1;
+      if (npc.id === "READ_3") target = 3;
+      else if (npc.id === "LIKE_5") target = 5;
+      else if (npc.id === "COMMENT_2") target = 2;
+      
+      if (status === "COMPLETED") {
+        ctx.fillStyle = "#55ff55";
+        ctx.font = "bold 18px var(--font-retro)";
+        ctx.fillText("✔", nx + 16, ny - 42);
+      } else if (progress >= target) {
+        ctx.fillStyle = "#ffff55";
+        ctx.font = "bold 18px var(--font-retro)";
+        ctx.fillText("?", nx + 16, ny - 42);
+      } else {
+        ctx.fillStyle = "#ff5555";
+        ctx.font = "bold 18px var(--font-retro)";
+        ctx.fillText("!", nx + 16, ny - 42);
       }
       
-      // Floating Mini Ore Health Bar
-      ctx.fillStyle = "#000";
-      ctx.fillRect(bx + 4 + shakeOffset, by - 8, 40, 5);
-      const hpWidth = Math.floor(40 * ratio);
-      ctx.fillStyle = isGreat ? "var(--mc-diamond)" : "var(--mc-red)";
-      ctx.fillRect(bx + 4 + shakeOffset, by - 8, hpWidth, 5);
+    } else if (item.type === 'post') {
+      const p = item.data;
+      const bx = p.x * TILE_SIZE;
+      const by = item.y - 48;
+      
+      const isGreat = ["Hero", "Volunteer", "Independence fighter", "Educator", "Community contributor", "영웅", "봉사자", "독립운동가", "교육자", "지역사회 공헌 인물"].indexOf(p.category) !== -1;
+      const blockData = state.postHp[p.postId] || { hp: 5, maxHp: 5 };
+      const isMined = blockData.hp <= 0;
+      
+      let shakeOffset = 0;
+      if (p.shakeTime && p.shakeTime > 0) {
+        shakeOffset = (p.shakeTime % 2 === 0 ? 1 : -1) * 4;
+      }
+      
+      const personName = p.title.split('-')[0].trim();
+      const oreStatusText = isMined ? "완료(F)" : `채굴(F) H:${blockData.hp}`;
+      
+      const faceColor = isGreat ? "#0b4e5b" : "#4c0505";
+      const topColor = isGreat ? "#137487" : "#720d0d";
+      const sideColor = isGreat ? "#05272e" : "#280303";
+      
+      draw3DCube(
+        bx + shakeOffset, by, 48, 48, 10,
+        faceColor, topColor, sideColor,
+        blockData.hp / blockData.maxHp, isMined, isGreat,
+        personName, oreStatusText
+      );
+      
+    } else if (item.type === 'bonus_ore') {
+      const ore = item.data;
+      const bx = ore.x * TILE_SIZE;
+      const by = item.y - 48;
+      const isMined = ore.hasMined;
+      const blockData = state.bonusOresHp[ore.oreId] || { hp: 5, maxHp: 5 };
+      
+      let shakeOffset = 0;
+      if (ore.shakeTime && ore.shakeTime > 0) {
+        shakeOffset = (ore.shakeTime % 2 === 0 ? 1 : -1) * 4;
+      }
+      
+      let faceColor = "#5d4a13";
+      let topColor = "#8f731d";
+      let sideColor = "#3d300b";
+      
+      if (ore.name.includes("다이아몬드")) {
+        faceColor = "#1f353a"; topColor = "#2e4f57"; sideColor = "#111d20";
+      } else if (ore.name.includes("에메랄드")) {
+        faceColor = "#0d3a1b"; topColor = "#165f2c"; sideColor = "#061d0d";
+      } else if (ore.name.includes("루비")) {
+        faceColor = "#3f0c10"; topColor = "#63131a"; sideColor = "#1f0507";
+      } else if (ore.name.includes("마법")) {
+        faceColor = "#2e1065"; topColor = "#4c1d95"; sideColor = "#1e1b4b";
+      }
+      
+      const oreStatusText = isMined ? "완료(F)" : `보너스(F) H:${blockData.hp}`;
+      
+      draw3DCube(
+        bx + shakeOffset, by, 48, 48, 10,
+        faceColor, topColor, sideColor,
+        blockData.hp / blockData.maxHp, isMined, true,
+        ore.name, oreStatusText
+      );
+      
+    } else if (item.type === 'player') {
+      const px = player.x;
+      const py = player.y + player.z; // Apply jump height offset (Z axis)
+      
+      // Shadow (drawn flat on Y ground plane)
+      ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+      ctx.beginPath();
+      ctx.ellipse(px + 12, player.y + 42, 12, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Body
+      ctx.fillStyle = "#1e88e5";
+      ctx.fillRect(px, py + 16, player.width, 28);
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(px, py + 16, player.width, 28);
+      
+      // Legs walk
+      ctx.fillStyle = "#0d47a1";
+      if (player.isMoving && player.z === 0) {
+        if (player.animFrame % 2 === 0) {
+          ctx.fillRect(px + 2, py + 38, 8, 8);
+          ctx.strokeRect(px + 2, py + 38, 8, 8);
+          ctx.fillRect(px + 14, py + 34, 8, 8);
+          ctx.strokeRect(px + 14, py + 34, 8, 8);
+        } else {
+          ctx.fillRect(px + 2, py + 34, 8, 8);
+          ctx.strokeRect(px + 2, py + 34, 8, 8);
+          ctx.fillRect(px + 14, py + 38, 8, 8);
+          ctx.strokeRect(px + 14, py + 38, 8, 8);
+        }
+      } else {
+        ctx.fillRect(px + 2, py + 38, 8, 8);
+        ctx.strokeRect(px + 2, py + 38, 8, 8);
+        ctx.fillRect(px + 14, py + 38, 8, 8);
+        ctx.strokeRect(px + 14, py + 38, 8, 8);
+      }
+      
+      // Head
+      ctx.fillStyle = "#ffcc80";
+      ctx.fillRect(px + 2, py, 20, 18);
+      ctx.strokeRect(px + 2, py, 20, 18);
+      
+      // Hair & Eyes
+      ctx.fillStyle = "#5d4037";
+      ctx.fillRect(px + 2, py, 20, 6);
+      ctx.fillStyle = "#000000";
+      if (player.direction === 1) {
+        ctx.fillRect(px + 14, py + 8, 3, 3);
+        ctx.fillRect(px + 18, py + 8, 3, 3);
+      } else {
+        ctx.fillRect(px + 4, py + 8, 3, 3);
+        ctx.fillRect(px + 8, py + 8, 3, 3);
+      }
+      
+      // Pickaxe Swing rotation
+      const equipped = getEquippedPickaxe();
+      if (player.isSwinging) {
+        ctx.save();
+        const armX = px + (player.direction === 1 ? player.width : 0);
+        const armY = py + 22;
+        ctx.translate(armX, armY);
+        
+        const finalAngle = player.direction === 1 ? player.swingAngle : -player.swingAngle - Math.PI;
+        ctx.rotate(finalAngle);
+        
+        // Wood Shaft
+        ctx.strokeStyle = "#854d0e";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, -32);
+        ctx.stroke();
+        
+        // Voxel Head
+        ctx.fillStyle = equipped.color;
+        ctx.beginPath();
+        ctx.moveTo(-16, -32);
+        ctx.lineTo(16, -32);
+        ctx.lineTo(12, -26);
+        ctx.lineTo(-12, -26);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = "#000";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        
+        ctx.restore();
+      }
     }
-    
-    // Label tag
-    const personName = p.title.split('-')[0].trim();
-    ctx.fillStyle = "rgba(0,0,0,0.85)";
-    ctx.fillRect(bx - 20 + shakeOffset, by - 36, 88, 24);
-    ctx.strokeStyle = isMined ? "#55ff55" : (isGreat ? "var(--mc-diamond)" : "var(--mc-red)");
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(bx - 20 + shakeOffset, by - 36, 88, 24);
-    
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 8px var(--font-retro)";
-    ctx.textAlign = "center";
-    ctx.fillText(personName, bx + 24 + shakeOffset, by - 26);
-    
-    ctx.fillStyle = isMined ? "#55ff55" : "#aaaaaa";
-    ctx.font = "6px var(--font-retro)";
-    const oreStatusText = isMined ? "완료(F)" : `채굴(F) H:${blockData.hp}`;
-    ctx.fillText(oreStatusText, bx + 24 + shakeOffset, by - 16);
   });
-  
-  // 7. Draw Player
-  const px = player.x;
-  const py = player.y;
-  
-  // Body
-  ctx.fillStyle = "#1e88e5";
-  ctx.fillRect(px, py + 16, player.width, 28);
-  ctx.strokeStyle = "#000";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(px, py + 16, player.width, 28);
-  
-  // Legs (walk animation)
-  ctx.fillStyle = "#0d47a1";
-  if (player.isMoving && player.grounded) {
-    if (player.animFrame % 2 === 0) {
-      ctx.fillRect(px + 2, py + 38, 8, 8);
-      ctx.strokeRect(px + 2, py + 38, 8, 8);
-      ctx.fillRect(px + 14, py + 34, 8, 8);
-      ctx.strokeRect(px + 14, py + 34, 8, 8);
-    } else {
-      ctx.fillRect(px + 2, py + 34, 8, 8);
-      ctx.strokeRect(px + 2, py + 34, 8, 8);
-      ctx.fillRect(px + 14, py + 38, 8, 8);
-      ctx.strokeRect(px + 14, py + 38, 8, 8);
-    }
-  } else {
-    ctx.fillRect(px + 2, py + 38, 8, 8);
-    ctx.strokeRect(px + 2, py + 38, 8, 8);
-    ctx.fillRect(px + 14, py + 38, 8, 8);
-    ctx.strokeRect(px + 14, py + 38, 8, 8);
-  }
-  
-  // Head
-  ctx.fillStyle = "#ffcc80";
-  ctx.fillRect(px + 2, py, 20, 18);
-  ctx.strokeRect(px + 2, py, 20, 18);
-  
-  // Hair & Eyes
-  ctx.fillStyle = "#5d4037";
-  ctx.fillRect(px + 2, py, 20, 6);
-  ctx.fillStyle = "#000000";
-  if (player.direction === 1) {
-    ctx.fillRect(px + 14, py + 8, 3, 3);
-    ctx.fillRect(px + 18, py + 8, 3, 3);
-  } else {
-    ctx.fillRect(px + 4, py + 8, 3, 3);
-    ctx.fillRect(px + 8, py + 8, 3, 3);
-  }
-  
-  // 8. Draw Equipt Pickaxe Swing Animation
-  const equipped = getEquippedPickaxe();
-  if (player.isSwinging) {
-    ctx.save();
-    // Anchor rotation to player's center body
-    const armX = px + (player.direction === 1 ? player.width : 0);
-    const armY = py + 22;
-    ctx.translate(armX, armY);
-    
-    // Rotate relative to player direction
-    const finalAngle = player.direction === 1 ? player.swingAngle : -player.swingAngle - Math.PI;
-    ctx.rotate(finalAngle);
-    
-    // Draw pickaxe shaft
-    ctx.strokeStyle = "#854d0e"; // Wood shaft
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(0, -32);
-    ctx.stroke();
-    
-    // Draw pickaxe head curves
-    ctx.fillStyle = equipped.color;
-    ctx.beginPath();
-    ctx.moveTo(-16, -32);
-    ctx.lineTo(16, -32);
-    ctx.lineTo(12, -26);
-    ctx.lineTo(-12, -26);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = "#000";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    
-    ctx.restore();
-  }
   
   // 9. Draw Particle FX
   juice.particles.forEach(p => {

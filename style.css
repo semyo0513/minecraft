@@ -853,10 +853,17 @@ body {
   z-index: 30;
 }
 
-.d-pad {
+.d-pad-4way {
   display: flex;
-  gap: 16px;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
   pointer-events: auto;
+}
+
+.d-pad-row {
+  display: flex;
+  gap: 32px;
 }
 
 .action-pad {
